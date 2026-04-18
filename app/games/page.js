@@ -73,7 +73,7 @@ export default function GamesPage() {
                 target="_blank"
                 rel="noreferrer"
               >
-                Open Standalone
+                Open Full Screen
               </a>
             </div>
           </div>

@@ -342,13 +342,8 @@
     }
 
     function nextLevel() {
-      const completedLevelIndex = run.levelIndex;
-      const rewardCoins = 12 + completedLevelIndex * 4;
-      const rewardHeal = Math.min(player.maxHp - player.hp, 18 + completedLevelIndex * 3);
-      player.coins += rewardCoins;
-      player.hp += rewardHeal;
-      run.levelRewardCoins = rewardCoins;
-      run.levelRewardHeal = rewardHeal;
+      player.coins += run.levelRewardCoins;
+      player.hp = Math.min(player.maxHp, player.hp + run.levelRewardHeal);
 
       run.levelIndex++;
       if (run.levelIndex >= levels.length) {
@@ -370,6 +365,8 @@
       if (run.levelKills < level.goal) return;
       if (level.boss && enemies.some((enemy) => enemy.isBoss)) return;
       if (!level.boss) enemies.length = 0;
+      run.levelRewardCoins = 12 + run.levelIndex * 4;
+      run.levelRewardHeal = Math.min(player.maxHp - player.hp, 18 + run.levelIndex * 3);
       run.awaitingNext = true;
       state = "between";
     }
@@ -673,11 +670,41 @@
       } else if (level.background === "canal") {
         ctx.fillStyle = "#173c4d";
         ctx.fillRect(0, H - 180, W, 180);
+        ctx.fillStyle = "#132b3a";
+        for (let i = 0; i < 8; i++) {
+          const x = ((i * 170 + 40 + farScroll * 0.35) % (W + 220)) - 110;
+          ctx.fillRect(x, H - 320, 90, 140);
+          ctx.fillStyle = "#1f4f64";
+          ctx.fillRect(x + 10, H - 300, 18, 18);
+          ctx.fillRect(x + 36, H - 272, 18, 18);
+          ctx.fillRect(x + 58, H - 244, 18, 18);
+          ctx.fillStyle = "#132b3a";
+        }
         ctx.fillStyle = "#4bb8db";
         ctx.fillRect(110 + farScroll * 0.15, H - 160, W - 220, 120);
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        for (let i = 0; i < 16; i++) {
+          const rippleX = ((140 + i * 78 + nearScroll * 0.7) % (W + 100)) - 50;
+          ctx.fillRect(rippleX, H - 112 + Math.sin((frame + i * 10) * 0.08) * 6, 36, 3);
+        }
         ctx.fillStyle = "#305a6f";
         ctx.fillRect(0, H - 170, 110, 140);
         ctx.fillRect(W - 110, H - 170, 110, 140);
+        ctx.fillStyle = "#254a5d";
+        for (let i = 0; i < 4; i++) {
+          const bridgeX = ((180 + i * 260 + midScroll * 0.8) % (W + 320)) - 160;
+          ctx.fillRect(bridgeX, H - 212, 140, 12);
+          ctx.fillRect(bridgeX + 10, H - 200, 10, 40);
+          ctx.fillRect(bridgeX + 120, H - 200, 10, 40);
+        }
+        for (let i = 0; i < 5; i++) {
+          const boatX = ((210 + i * 220 + nearScroll) % (W + 260)) - 130;
+          const bob = Math.sin((frame + i * 16) * 0.06) * 4;
+          ctx.fillStyle = "#ffcf78";
+          ctx.fillRect(boatX, H - 102 + bob, 34, 8);
+          ctx.fillStyle = "#ffe7b6";
+          ctx.fillRect(boatX + 8, H - 112 + bob, 10, 10);
+        }
         for (let i = 0; i < 12; i++) {
           ctx.fillStyle = "rgba(255,255,255,0.16)";
           ctx.fillRect(((150 + i * 56 + nearScroll * 0.6) % (W + 120)) - 60, H - 128 + Math.sin((frame + i * 8) * 0.04) * 8, 34, 4);
@@ -947,6 +974,10 @@
     window.addEventListener("keydown", (event) => {
       const key = event.key.toLowerCase();
       keys[key] = true;
+      if (event.key === "Escape") {
+        window.location.href = "/games/super-bear";
+        return;
+      }
       if (event.code === "Space") {
         event.preventDefault();
         dodge();

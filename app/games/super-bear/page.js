@@ -41,7 +41,7 @@ export default function SuperBearPage() {
                 target="_blank"
                 rel="noreferrer"
               >
-                Open Standalone
+                Open Full Screen
               </a>
             </div>
           </div>

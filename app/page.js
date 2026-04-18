@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 const LAUNCH_DATE = "2026-06-16T12:00:00-04:00";
@@ -91,6 +92,9 @@ export default function Home() {
             </p>
 
             <div className="soon-cta">
+              <Link className="soon-btn" href="/games">
+                Enter The Arcade
+              </Link>
               <a
                 className="soon-btn soon-btn-primary"
                 href="https://www.youtube.com/@CodeGlitchGaming"
