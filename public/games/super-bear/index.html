@@ -64,6 +64,7 @@
   </div>
 
   <script>
+    const LETTER_REWARD_WORD = "JOSHUA";
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = true;
@@ -81,8 +82,15 @@
     let shopOpen = false;
     let victory = false;
 
+    function loadSave() {
+      return { pandaUnlocked: false, selectedSkin: "default" };
+    }
+
+    const saveState = loadSave();
+
     const assets = {
-      playerSheet: new Image(),
+      playerDefaultSheet: new Image(),
+      playerPandaSheet: new Image(),
       enemySheet: new Image(),
     };
 
@@ -117,20 +125,21 @@
       return offscreen;
     }
 
-    assets.playerSheet.src = "./assets/super-bear-sheet-v2.png";
+    assets.playerDefaultSheet.src = "./assets/super-bear-sheet-v3.png";
+    assets.playerPandaSheet.src = "./assets/super-bear-pixel-panda-v1.png";
     assets.enemySheet.src = "./assets/enemy-sheet-v2.png";
 
     const levels = [
       { name: "Neon Rooftops", theme: ["#11233d", "#0d1827"], accent: "#23d6ff", enemyTint: "#7fe6ff", goal: 8, enemySpeed: 0.8, enemyHp: 24, boss: false, background: "rooftops", rule: "Defeat 8 rooftop monsters to advance." },
       { name: "Arcade Alley", theme: ["#25153f", "#130d25"], accent: "#ff6bd6", enemyTint: "#ffc56b", goal: 10, enemySpeed: 0.86, enemyHp: 28, boss: false, background: "arcade", rule: "Defeat 10 arcade monsters to advance." },
-      { name: "Glitch Garden", theme: ["#143628", "#0d1d17"], accent: "#71ff8a", enemyTint: "#8cf6a2", goal: 12, enemySpeed: 0.92, enemyHp: 32, boss: false, background: "garden", rule: "Defeat 12 garden monsters to advance." },
+      { name: "Barnyard Farm", theme: ["#143628", "#0d1d17"], accent: "#71ff8a", enemyTint: "#8cf6a2", goal: 12, enemySpeed: 0.92, enemyHp: 32, boss: true, bossType: "nitro", background: "garden", rule: "Defeat 12 farm monsters and Nitro to advance." },
       { name: "Cyber Canal", theme: ["#0f3141", "#091722"], accent: "#79d8ff", enemyTint: "#a4c9ff", goal: 14, enemySpeed: 0.98, enemyHp: 36, boss: false, background: "canal", rule: "Defeat 14 canal monsters to advance." },
-      { name: "Molten Metro", theme: ["#40180e", "#1e0d09"], accent: "#ff9256", enemyTint: "#ffbf8f", goal: 10, enemySpeed: 1.05, enemyHp: 42, boss: true, background: "metro", rule: "Defeat 10 metro monsters and the boss to unlock the exit." },
+      { name: "Molten Metro", theme: ["#40180e", "#1e0d09"], accent: "#ff9256", enemyTint: "#ffbf8f", goal: 10, enemySpeed: 1.05, enemyHp: 42, boss: true, bossType: "generic", background: "metro", rule: "Defeat 10 metro monsters and the boss to unlock the exit." },
       { name: "Storm Circuit", theme: ["#1d2543", "#101624"], accent: "#9cb4ff", enemyTint: "#ffd56e", goal: 16, enemySpeed: 1.08, enemyHp: 44, boss: false, background: "storm", rule: "Defeat 16 storm monsters to advance." },
       { name: "Shadow Harbor", theme: ["#1e2a34", "#0d141b"], accent: "#9af0ff", enemyTint: "#bdd3f7", goal: 18, enemySpeed: 1.12, enemyHp: 48, boss: false, background: "harbor", rule: "Defeat 18 harbor monsters to advance." },
       { name: "Comet Ridge", theme: ["#34244c", "#171022"], accent: "#c98fff", enemyTint: "#ffb2de", goal: 20, enemySpeed: 1.18, enemyHp: 50, boss: false, background: "comet", rule: "Defeat 20 comet ridge monsters to advance." },
       { name: "Titan Foundry", theme: ["#3b2513", "#181008"], accent: "#ffd46a", enemyTint: "#ffddb5", goal: 22, enemySpeed: 1.25, enemyHp: 54, boss: false, background: "foundry", rule: "Defeat 22 foundry monsters to advance." },
-      { name: "Final Core", theme: ["#3e1020", "#140813"], accent: "#ff5f8a", enemyTint: "#ffc3d1", goal: 14, enemySpeed: 1.32, enemyHp: 64, boss: true, background: "finalcore", rule: "Defeat 14 final-core monsters, then destroy the last boss to win." },
+      { name: "Final Core", theme: ["#3e1020", "#140813"], accent: "#ff5f8a", enemyTint: "#ffc3d1", goal: 14, enemySpeed: 1.32, enemyHp: 64, boss: true, bossType: "generic", background: "finalcore", rule: "Defeat 14 final-core monsters, then destroy the last boss to win." },
     ];
 
     const player = {
@@ -151,11 +160,19 @@
       vy: 0,
       invuln: 0,
       sprite: 0,
+      skin: saveState.pandaUnlocked && saveState.selectedSkin === "panda" ? "panda" : "default",
+    };
+
+    const unlockedSkins = {
+      default: true,
+      panda: saveState.pandaUnlocked,
     };
 
     const run = {
       levelIndex: 0,
       enemiesDefeated: 0,
+      lettersEarned: 0,
+      joshuaComplete: false,
       levelKills: 0,
       bossSpawned: false,
       awaitingNext: false,
@@ -163,12 +180,21 @@
       sceneOffset: 0,
       levelRewardCoins: 0,
       levelRewardHeal: 0,
+      bossSpawnDelay: 0,
     };
 
     const shop = {
       boost: { label: "Power Claw", cost: 12, apply() { player.attack += 4; } },
       boots: { label: "Turbo Boots", cost: 14, apply() { player.speed += 0.24; } },
       heart: { label: "Honey Snack", cost: 16, apply() { player.maxHp += 18; player.hp = Math.min(player.maxHp, player.hp + 28); } },
+      panda: {
+        label: "Pixel Panda Suit",
+        cost: unlockedSkins.panda ? 0 : 20,
+        apply() {
+          unlockedSkins.panda = true;
+          player.skin = "panda";
+        },
+      },
     };
 
     const bullets = [];
@@ -220,6 +246,40 @@
       overlayTimer = duration;
     }
 
+    function playJoshuaChime() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const audioCtx = new AudioCtx();
+        const notes = [392, 523.25, 659.25, 783.99];
+        const start = audioCtx.currentTime;
+
+        notes.forEach((freq, index) => {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = "square";
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.0001, start + index * 0.11);
+          gain.gain.exponentialRampToValueAtTime(0.06, start + index * 0.11 + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + index * 0.11 + 0.1);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(start + index * 0.11);
+          osc.stop(start + index * 0.11 + 0.11);
+        });
+      } catch {}
+    }
+
+    function saveProgress() {
+      return;
+    }
+
+    function beginRun() {
+      setOverlay("Level 1: " + currentLevel().name, 140);
+      spawnWave();
+      state = "intro";
+    }
+
     function resetRun() {
       player.x = W / 2;
       player.y = H / 2;
@@ -232,6 +292,7 @@
       player.dodgeCooldown = 0;
       player.dodgeTimer = 0;
       player.invuln = 0;
+      player.skin = "default";
       bullets.length = 0;
       enemies.length = 0;
       particles.length = 0;
@@ -239,6 +300,8 @@
       pulses.length = 0;
       run.levelIndex = 0;
       run.enemiesDefeated = 0;
+      run.lettersEarned = 0;
+      run.joshuaComplete = false;
       run.levelKills = 0;
       run.bossSpawned = false;
       run.awaitingNext = false;
@@ -246,12 +309,15 @@
       run.sceneOffset = 0;
       run.levelRewardCoins = 0;
       run.levelRewardHeal = 0;
-      state = "intro";
+      run.bossSpawnDelay = 0;
+      unlockedSkins.panda = false;
+      shop.panda.cost = 20;
+      state = "start";
       paused = false;
       shopOpen = false;
       victory = false;
-      setOverlay("Level 1: " + currentLevel().name, 140);
-      spawnWave();
+      overlayText = "";
+      overlayTimer = 0;
     }
 
     function loadAssets() {
@@ -278,11 +344,158 @@
 
     function drawSprite(sheet, index, x, y, width, height, flip = false, alpha = 1) {
       const { sx, sy, sw, sh } = spriteFrame(sheet, index);
+      const drawHeight = height ?? Math.round(width * (sh / sw));
       ctx.save();
       ctx.globalAlpha = alpha;
+      ctx.imageSmoothingEnabled = false;
       ctx.translate(x, y);
       if (flip) ctx.scale(-1, 1);
-      ctx.drawImage(sheet, sx, sy, sw, sh, -width / 2, -height / 2, width, height);
+      ctx.drawImage(sheet, sx, sy, sw, sh, -width / 2, -drawHeight / 2, width, drawHeight);
+      ctx.restore();
+    }
+
+    function currentPlayerSheet() {
+      return player.skin === "panda" ? assets.playerPandaSheet : assets.playerDefaultSheet;
+    }
+
+    function drawPandaPlayer(x, y, flip = false, alpha = 1) {
+      const px = 4;
+      const left = Math.round(x - 11 * px);
+      const top = Math.round(y - 13 * px);
+      const bodyWhite = "#f4f8ff";
+      const blue = "#3f76ff";
+      const red = "#ef3f23";
+      const black = "#0d0d12";
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.imageSmoothingEnabled = false;
+      ctx.translate(x, y);
+      if (flip) ctx.scale(-1, 1);
+      ctx.translate(-x, -y);
+
+      // Ears
+      ctx.fillStyle = black;
+      ctx.fillRect(left + 3 * px, top + 1 * px, 4 * px, 4 * px);
+      ctx.fillRect(left + 15 * px, top + 1 * px, 4 * px, 4 * px);
+
+      // Head
+      ctx.fillStyle = bodyWhite;
+      ctx.fillRect(left + 4 * px, top + 3 * px, 14 * px, 9 * px);
+      ctx.fillRect(left + 5 * px, top + 2 * px, 12 * px, 1 * px);
+      ctx.fillRect(left + 6 * px, top + 12 * px, 10 * px, 1 * px);
+
+      // Mask and face
+      ctx.fillStyle = blue;
+      ctx.fillRect(left + 5 * px, top + 5 * px, 12 * px, 4 * px);
+      ctx.fillStyle = black;
+      ctx.fillRect(left + 7 * px, top + 6 * px, 2 * px, 3 * px);
+      ctx.fillRect(left + 13 * px, top + 6 * px, 2 * px, 3 * px);
+      ctx.fillRect(left + 9 * px, top + 10 * px, 4 * px, 1 * px);
+      ctx.fillRect(left + 13 * px, top + 11 * px, 2 * px, 1 * px);
+
+      // Torso
+      ctx.fillStyle = bodyWhite;
+      ctx.fillRect(left + 6 * px, top + 13 * px, 10 * px, 8 * px);
+
+      // Chest emblem
+      ctx.fillStyle = black;
+      ctx.fillRect(left + 10 * px, top + 14 * px, 2 * px, 7 * px);
+      ctx.fillRect(left + 12 * px, top + 14 * px, 3 * px, 2 * px);
+      ctx.fillRect(left + 14 * px, top + 16 * px, 1 * px, 2 * px);
+      ctx.fillRect(left + 12 * px, top + 18 * px, 2 * px, 1 * px);
+
+      // Arms
+      ctx.fillStyle = red;
+      ctx.fillRect(left + 2 * px, top + 13 * px, 4 * px, 2 * px);
+      ctx.fillRect(left + 1 * px, top + 15 * px, 5 * px, 3 * px);
+      ctx.fillRect(left + 16 * px, top + 13 * px, 4 * px, 2 * px);
+      ctx.fillRect(left + 16 * px, top + 15 * px, 5 * px, 3 * px);
+      ctx.fillRect(left + 2 * px, top + 18 * px, 2 * px, 2 * px);
+      ctx.fillRect(left + 19 * px, top + 18 * px, 2 * px, 2 * px);
+
+      // Legs
+      const stride = player.sprite === 1 ? 1 : player.sprite === 2 ? -1 : 0;
+      ctx.fillStyle = blue;
+      ctx.fillRect(left + 7 * px, top + 21 * px, 4 * px, 7 * px);
+      ctx.fillRect(left + 12 * px, top + 21 * px, 4 * px, 7 * px);
+      ctx.fillRect(left + (7 + stride) * px, top + 27 * px, 4 * px, 2 * px);
+      ctx.fillRect(left + (12 - stride) * px, top + 27 * px, 4 * px, 2 * px);
+
+      ctx.restore();
+    }
+
+    function drawGrayEnemy(enemy) {
+      const px = enemy.isBoss ? 5 : 4;
+      const x = Math.round(enemy.x);
+      const y = Math.round(enemy.y);
+      const left = x - 10 * px;
+      const top = y - 12 * px;
+      const body = "#a7a7aa";
+      const light = "#d4d4d8";
+      const dark = "#111111";
+      const eyeWhite = "#f8fbff";
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      if (player.x < enemy.x) {
+        ctx.translate(x, y);
+        ctx.scale(-1, 1);
+        ctx.translate(-x, -y);
+      }
+
+      // Ears
+      ctx.fillStyle = body;
+      ctx.fillRect(left + 2 * px, top + 2 * px, 4 * px, 4 * px);
+      ctx.fillRect(left + 13 * px, top + 1 * px, 5 * px, 5 * px);
+
+      // Head
+      ctx.fillRect(left + 3 * px, top + 4 * px, 14 * px, 9 * px);
+      ctx.fillRect(left + 4 * px, top + 3 * px, 12 * px, 1 * px);
+      ctx.fillStyle = light;
+      ctx.fillRect(left + 7 * px, top + 6 * px, 6 * px, 5 * px);
+
+      // Face
+      ctx.fillStyle = eyeWhite;
+      ctx.fillRect(left + 7 * px, top + 6 * px, 2 * px, 3 * px);
+      ctx.fillRect(left + 11 * px, top + 6 * px, 2 * px, 3 * px);
+      ctx.fillStyle = dark;
+      ctx.fillRect(left + 7 * px, top + 6 * px, 1 * px, 3 * px);
+      ctx.fillRect(left + 11 * px, top + 6 * px, 1 * px, 3 * px);
+      if (enemy.isBoss) {
+        ctx.fillRect(left + 6 * px, top + 4 * px, 4 * px, 1 * px);
+        ctx.fillRect(left + 10 * px, top + 3 * px, 4 * px, 2 * px);
+        ctx.fillRect(left + 8 * px, top + 10 * px, 5 * px, 1 * px);
+        ctx.fillRect(left + 7 * px, top + 11 * px, 1 * px, 2 * px);
+        ctx.fillRect(left + 12 * px, top + 11 * px, 1 * px, 2 * px);
+      } else {
+        ctx.fillRect(left + 8 * px, top + 10 * px, 4 * px, 1 * px);
+        ctx.fillRect(left + 11 * px, top + 11 * px, 2 * px, 1 * px);
+      }
+
+      // Body
+      ctx.fillStyle = body;
+      ctx.fillRect(left + 5 * px, top + 13 * px, 10 * px, 9 * px);
+      ctx.fillRect(left + 6 * px, top + 12 * px, 8 * px, 1 * px);
+      ctx.fillStyle = light;
+      ctx.fillRect(left + 8 * px, top + 15 * px, 1 * px, 2 * px);
+      ctx.fillRect(left + 9 * px, top + 14 * px, 2 * px, 1 * px);
+      ctx.fillRect(left + 10 * px, top + 15 * px, 1 * px, 2 * px);
+      ctx.fillRect(left + 9 * px, top + 17 * px, 2 * px, 1 * px);
+      ctx.fillRect(left + 8 * px, top + 18 * px, 1 * px, 2 * px);
+      ctx.fillRect(left + 9 * px, top + 20 * px, 2 * px, 1 * px);
+      ctx.fillRect(left + 10 * px, top + 19 * px, 1 * px, 2 * px);
+
+      // Arms
+      const stride = enemy.frame === 1 ? 1 : enemy.frame === 2 ? -1 : 0;
+      ctx.fillStyle = body;
+      ctx.fillRect(left + (3 + Math.max(stride, 0)) * px, top + 14 * px, 3 * px, 7 * px);
+      ctx.fillRect(left + (14 + Math.min(stride, 0)) * px, top + 14 * px, 4 * px, 7 * px);
+
+      // Legs
+      ctx.fillRect(left + (7 + stride) * px, top + 22 * px, 3 * px, 7 * px);
+      ctx.fillRect(left + (11 - stride) * px, top + 22 * px, 3 * px, 7 * px);
+
       ctx.restore();
     }
 
@@ -300,7 +513,7 @@
       enemies.push({
         x,
         y,
-        radius: isBoss ? 58 : 34,
+        radius: isBoss ? (level.bossType === "nitro" ? 44 : 58) : 34,
         hp: isBoss ? level.enemyHp * 7 : level.enemyHp,
         maxHp: isBoss ? level.enemyHp * 7 : level.enemyHp,
         speed: isBoss ? level.enemySpeed * 0.72 : level.enemySpeed,
@@ -308,6 +521,7 @@
         frame: isBoss ? 3 : 0,
         attackCooldown: 0,
         isBoss,
+        bossType: isBoss ? (level.bossType || "generic") : null,
       });
     }
 
@@ -319,12 +533,16 @@
       run.levelKills = 0;
       run.bossSpawned = false;
       run.spawnTimer = 30;
+      run.bossSpawnDelay = 0;
       const level = currentLevel();
       const baseCount = Math.min(6, 2 + Math.floor(run.levelIndex / 2));
       for (let i = 0; i < baseCount; i++) spawnEnemy(false);
       if (level.boss) {
-        spawnEnemy(true);
-        run.bossSpawned = true;
+        run.bossSpawnDelay = level.bossType === "nitro" ? 420 : 0;
+        if (run.bossSpawnDelay === 0) {
+          spawnEnemy(true);
+          run.bossSpawned = true;
+        }
       }
     }
 
@@ -462,6 +680,17 @@
       player.coins += enemy.isBoss ? 16 : 4;
       run.enemiesDefeated++;
       run.levelKills++;
+      if (run.lettersEarned < LETTER_REWARD_WORD.length) {
+        const nextLetter = LETTER_REWARD_WORD[run.lettersEarned];
+        run.lettersEarned++;
+        if (run.lettersEarned >= LETTER_REWARD_WORD.length) {
+          run.joshuaComplete = true;
+          playJoshuaChime();
+          setOverlay("JOSHUA complete - you know my name?", 160);
+        } else {
+          setOverlay("Letter unlocked: " + nextLetter, 110);
+        }
+      }
       createBurst(enemy.x, enemy.y, enemy.isBoss ? "#ff7c9e" : "#9cdcff", enemy.isBoss ? 20 : 10);
       drops.push({
         x: enemy.x,
@@ -555,10 +784,17 @@
     function buyItem(key) {
       if (!shop[key]) return;
       const item = shop[key];
+      if (key === "panda" && unlockedSkins.panda) {
+        player.skin = player.skin === "panda" ? "default" : "panda";
+        saveProgress();
+        setOverlay(player.skin === "panda" ? "Pixel Panda Suit equipped" : "Classic Super Bear equipped", 90);
+        return;
+      }
       if (player.coins < item.cost) return;
       player.coins -= item.cost;
       item.apply();
-      item.cost += 6;
+      item.cost += key === "panda" ? 0 : 6;
+      saveProgress();
       setOverlay(item.label + " unlocked", 90);
     }
 
@@ -566,7 +802,7 @@
       frame++;
       if (overlayTimer > 0) overlayTimer--;
 
-      if (state === "loading" || paused || shopOpen || state === "victory") {
+      if (state === "loading" || state === "start" || paused || shopOpen || state === "victory") {
         updateParticles();
         return;
       }
@@ -585,6 +821,14 @@
       const level = currentLevel();
       const activeNonBoss = enemies.filter((enemy) => !enemy.isBoss).length;
       const targetNonBoss = Math.min(7, 3 + Math.floor(run.levelIndex / 2));
+      if (level.boss && !run.bossSpawned && run.bossSpawnDelay > 0) {
+        run.bossSpawnDelay--;
+        if (run.bossSpawnDelay <= 0) {
+          spawnEnemy(true);
+          run.bossSpawned = true;
+          setOverlay("Nitro is here!", 90);
+        }
+      }
       if (run.levelKills < level.goal) {
         run.spawnTimer--;
         if (run.spawnTimer <= 0 && activeNonBoss < targetNonBoss) {
@@ -856,9 +1100,79 @@
       }
     }
 
+    function drawNitroBoss(enemy) {
+      const x = Math.round(enemy.x);
+      const y = Math.round(enemy.y);
+      const left = x - 34;
+      const top = y - 34;
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+
+      if (enemy.attackCooldown < 8) {
+        ctx.fillStyle = "rgba(255, 120, 70, 0.14)";
+        ctx.fillRect(left - 8, top - 8, 84, 84);
+      }
+
+      // Straw spikes / hay fringe
+      ctx.fillStyle = "#d8b15a";
+      ctx.fillRect(left + 2, top + 6, 6, 8);
+      ctx.fillRect(left + 58, top + 4, 6, 10);
+      ctx.fillRect(left + 10, top + 58, 6, 10);
+      ctx.fillRect(left + 50, top + 58, 6, 10);
+      ctx.fillRect(left - 4, top + 20, 6, 8);
+      ctx.fillRect(left + 66, top + 24, 6, 8);
+
+      // Main crate / hay bale body
+      ctx.fillStyle = "#c98a3a";
+      ctx.fillRect(left + 6, top + 6, 56, 56);
+      ctx.fillStyle = "#e6a650";
+      ctx.fillRect(left + 10, top + 10, 48, 48);
+
+      // Wood slats
+      ctx.fillStyle = "#8b5422";
+      ctx.fillRect(left + 10, top + 18, 48, 4);
+      ctx.fillRect(left + 10, top + 40, 48, 4);
+      ctx.fillRect(left + 18, top + 10, 4, 48);
+      ctx.fillRect(left + 46, top + 10, 4, 48);
+
+      // Face plate
+      ctx.fillStyle = "#f5bb68";
+      ctx.fillRect(left + 18, top + 18, 28, 26);
+      ctx.fillStyle = "#111111";
+      ctx.fillRect(left + 24, top + 26, 4, 10);
+      ctx.fillRect(left + 36, top + 26, 4, 10);
+      ctx.fillRect(left + 26, top + 18, 12, 4);
+      ctx.fillRect(left + 20, top + 38, 24, 4);
+      ctx.fillRect(left + 18, top + 34, 4, 4);
+      ctx.fillRect(left + 42, top + 34, 4, 4);
+
+      // Angry brow / fuse notch
+      ctx.fillStyle = "#1b1b1b";
+      ctx.fillRect(left + 22, top + 12, 18, 4);
+      ctx.fillRect(left + 36, top + 8, 4, 8);
+
+      // Little legs
+      ctx.fillStyle = "#8b5422";
+      ctx.fillRect(left + 18, top + 62, 6, 8);
+      ctx.fillRect(left + 44, top + 62, 6, 8);
+
+      // Flash on hit
+      if (enemy.attackCooldown < 4) {
+        ctx.fillStyle = "rgba(255,255,255,0.18)";
+        ctx.fillRect(left + 6, top + 6, 56, 56);
+      }
+
+      ctx.restore();
+    }
+
     function drawCharacters() {
       for (const enemy of enemies) {
-        drawSprite(assets.enemySheet, enemy.frame, enemy.x, enemy.y + 2, enemy.isBoss ? 130 : 90, enemy.isBoss ? 130 : 90, player.x < enemy.x);
+        if (enemy.isBoss && enemy.bossType === "nitro") {
+          drawNitroBoss(enemy);
+        } else {
+          drawGrayEnemy(enemy);
+        }
         if (enemy.isBoss) {
           ctx.fillStyle = "rgba(0,0,0,0.55)";
           ctx.fillRect(enemy.x - 56, enemy.y - 86, 112, 10);
@@ -868,13 +1182,17 @@
       }
 
       const alpha = player.invuln > 0 && frame % 6 < 3 ? 0.55 : 1;
-      drawSprite(assets.playerSheet, player.sprite, player.x, player.y, 110, 110, player.facing < 0, alpha);
+      if (player.skin === "panda") {
+        drawPandaPlayer(player.x, player.y, player.facing < 0, alpha);
+      } else {
+        drawSprite(currentPlayerSheet(), player.sprite, player.x, player.y, 110, undefined, player.facing < 0, alpha);
+      }
     }
 
     function drawHud() {
       const level = currentLevel();
       ctx.fillStyle = "rgba(0,0,0,0.62)";
-      ctx.fillRect(18, 18, 360, 122);
+      ctx.fillRect(18, 18, 360, 150);
       ctx.fillStyle = "rgba(0,0,0,0.62)";
       ctx.fillRect(W - 314, 18, 284, 110);
 
@@ -904,18 +1222,29 @@
 
     function drawShop() {
       ctx.fillStyle = "rgba(4, 8, 16, 0.88)";
-      ctx.fillRect(190, 110, 580, 280);
+      ctx.fillRect(176, 96, 610, 346);
       ctx.strokeStyle = "#39e4ff";
       ctx.lineWidth = 3;
-      ctx.strokeRect(190, 110, 580, 280);
+      ctx.strokeRect(176, 96, 610, 346);
       drawOutlinedText("Bear Lab Shop", 480, 138, { font: "bold 34px Trebuchet MS", align: "center", color: "#7df0ff" });
-      drawOutlinedText("Press 1, 2, 3 to buy • Press B to close", 480, 174, { font: "18px Trebuchet MS", align: "center", color: "#d7eff8" });
+      drawOutlinedText("Press 1 to 4 to buy or equip - Press B to close", 480, 174, { font: "18px Trebuchet MS", align: "center", color: "#d7eff8" });
       drawOutlinedText("1. " + shop.boost.label + " - " + shop.boost.cost + " coins", 236, 230, { font: "24px Trebuchet MS", color: "#ffd76d" });
       drawOutlinedText("2. " + shop.boots.label + " - " + shop.boots.cost + " coins", 236, 276, { font: "24px Trebuchet MS", color: "#88ffe7" });
       drawOutlinedText("3. " + shop.heart.label + " - " + shop.heart.cost + " coins", 236, 322, { font: "24px Trebuchet MS", color: "#ffb9d0" });
+      const pandaText = unlockedSkins.panda
+        ? "4. Pixel Panda Suit - owned (" + (player.skin === "panda" ? "equipped" : "press 4 to equip") + ")"
+        : "4. " + shop.panda.label + " - " + shop.panda.cost + " coins";
+      drawOutlinedText(pandaText, 236, 368, { font: "24px Trebuchet MS", color: "#9cc7ff" });
+      drawOutlinedText("Power and speed upgrades stack in-run. The panda skin stays unlocked.", 480, 408, { font: "16px Trebuchet MS", align: "center", color: "#d8efff" });
     }
 
     function drawStatePanels() {
+      if (state === "start") {
+        ctx.fillStyle = "rgba(0,0,0,0.6)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Super Bear", W / 2, H / 2 - 48, { font: "bold 64px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("Left click to play", W / 2, H / 2 + 20, { font: "bold 28px Trebuchet MS", align: "center", color: "#23d6ff" });
+      }
       if (state === "intro") {
         ctx.fillStyle = "rgba(0,0,0,0.38)";
         ctx.fillRect(0, 0, W, H);
@@ -984,11 +1313,15 @@
         dodge();
       }
       if (key === "p" && state === "playing") paused = !paused;
-      if (key === "b" && state === "playing") shopOpen = !shopOpen;
+      if (key === "b" && state === "playing") {
+        event.preventDefault();
+        shopOpen = !shopOpen;
+      }
       if (shopOpen) {
         if (key === "1") buyItem("boost");
         if (key === "2") buyItem("boots");
         if (key === "3") buyItem("heart");
+        if (key === "4") buyItem("panda");
       }
       if (event.key === "Enter" && state === "between") nextLevel();
       if (key === "r" && (state === "gameover" || state === "victory")) resetRun();
@@ -1010,6 +1343,10 @@
     });
 
     canvas.addEventListener("mousedown", (event) => {
+      if (state === "start" && event.button === 0) {
+        beginRun();
+        return;
+      }
       const point = canvasPoint(event);
       mouseX = point.x;
       mouseY = point.y;
@@ -1019,7 +1356,7 @@
 
     loadAssets()
       .then(() => {
-        assets.playerSheet = stripLightBackground(assets.playerSheet);
+        assets.playerDefaultSheet = stripLightBackground(assets.playerDefaultSheet);
         assets.enemySheet = stripLightBackground(assets.enemySheet);
         resetRun();
         loop();

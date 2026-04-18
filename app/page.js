@@ -93,7 +93,7 @@ export default function Home() {
 
             <div className="soon-cta">
               <Link className="soon-btn" href="/games">
-                Enter The Arcade
+                Mini Games
               </Link>
               <a
                 className="soon-btn soon-btn-primary"
