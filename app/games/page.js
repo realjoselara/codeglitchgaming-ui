@@ -11,20 +11,19 @@ const GAMES = [
     highlights: ["10 levels", "Boss fights", "Shop upgrades"],
   },
   {
-    slug: "coming-soon",
-    title: "Next Cabinet",
-    status: "Empty slot",
+    slug: "super-bear-galaxy",
+    title: "Super Bear Galaxy",
+    status: "New cabinet",
     description:
-      "Reserved for the next game drop so the arcade can grow without changing the /games structure.",
-    highlights: ["Future-ready", "Dedicated slug", "Hub-friendly"],
-    disabled: true,
+      "A separate 50-level space campaign with galaxy sectors, cosmic bosses, and a fresh arcade run.",
+    highlights: ["50 levels", "Space themes", "Cosmic upgrades"],
   },
 ];
 
 export const metadata = {
-  title: "Games | CodeGlitch Gaming",
+  title: "Games | CodeGlitchGaming",
   description:
-    "CodeGlitch Gaming arcade hub with playable games and future cabinets.",
+    "CodeGlitchGaming arcade hub with playable games and future cabinets.",
 };
 
 export default function GamesPage() {
@@ -67,6 +66,9 @@ export default function GamesPage() {
               <Link className="games-link games-link-primary" href="/games/super-bear">
                 Play Super Bear
               </Link>
+              <Link className="games-link" href="/games/super-bear-galaxy">
+                Play Super Bear Galaxy
+              </Link>
               <a
                 className="games-link"
                 href="/games/super-bear/index.html"
@@ -86,8 +88,8 @@ export default function GamesPage() {
                 <div className="games-card-preview">
                   <iframe
                     className="games-card-frame"
-                    src="/games/super-bear/index.html"
-                    title="Super Bear preview"
+                    src={`/games/${game.slug}/index.html`}
+                    title={`${game.title} preview`}
                     loading="lazy"
                     allow="autoplay"
                   />

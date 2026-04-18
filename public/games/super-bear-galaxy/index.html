@@ -1,0 +1,1012 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Super Bear Galaxy</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top, rgba(126, 99, 255, 0.22), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(60, 219, 255, 0.16), transparent 24%),
+        #020611;
+      color: #eef7ff;
+      font-family: "Trebuchet MS", system-ui, sans-serif;
+    }
+
+    .game-wrap {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 6px solid #061018;
+      border-radius: 24px;
+      background: #050b1c;
+      box-shadow: 0 18px 70px rgba(0, 0, 0, 0.45);
+    }
+
+    .help {
+      position: absolute;
+      right: 28px;
+      bottom: 24px;
+      color: #d5eef9;
+      font-size: 12px;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+      text-align: right;
+      line-height: 1.4;
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: rgba(3, 10, 18, 0.38);
+    }
+  </style>
+</head>
+<body>
+  <div class="game-wrap">
+    <canvas id="game" width="1280" height="720"></canvas>
+    <div class="help">WASD move<br />Left click blaster<br />K pulse slash<br />Space dodge</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const keys = Object.create(null);
+    const playerRadius = 28;
+
+    let playerSheet = null;
+    let playerFrameBounds = [];
+    let frame = 0;
+    let state = "loading";
+    let overlayText = "";
+    let overlayTimer = 0;
+    let sceneScroll = 0;
+
+    const sectors = [
+      { name: "Nebula Run", accent: "#7be4ff", sky: ["#091327", "#182a58"] },
+      { name: "Solar Drift", accent: "#ffd56f", sky: ["#1b1025", "#5c2334"] },
+      { name: "Ion Storm", accent: "#8bffcf", sky: ["#081b28", "#154766"] },
+      { name: "Comet Field", accent: "#ff9fd4", sky: ["#180f29", "#38215f"] },
+      { name: "Core Orbit", accent: "#ffe483", sky: ["#24120c", "#6f2f18"] },
+    ];
+
+    const NORMAL_LEVELS = 50;
+    const TOTAL_LEVELS = 100;
+
+    const player = {
+      x: W / 2,
+      y: H / 2,
+      speed: 4.6,
+      hp: 120,
+      maxHp: 120,
+      attack: 16,
+      facing: 1,
+      invuln: 0,
+      shootCooldown: 0,
+      slashCooldown: 0,
+      dodgeCooldown: 0,
+      dodgeTimer: 0,
+    };
+
+    const run = {
+      sectorIndex: 0,
+      kills: 0,
+      goal: 10,
+      awaitingNext: false,
+      victory: false,
+      spawnTimer: 0,
+      bossSpawned: false,
+      cutsceneTimer: 0,
+      cutsceneStarted: false,
+      arrivalTimer: 0,
+      arrivalStarted: false,
+      tutorialStep: 0,
+      tutorialDone: false,
+    };
+
+    let bullets = [];
+    let enemies = [];
+    let particles = [];
+    let drops = [];
+    let rocket = null;
+
+    function setOverlay(text, duration = 120) {
+      overlayText = text;
+      overlayTimer = duration;
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function distance(ax, ay, bx, by) {
+      return Math.hypot(ax - bx, ay - by);
+    }
+
+    function buildDefaultFrameBounds(image, frameCount) {
+      const frameWidth = Math.floor(image.width / frameCount);
+      const frameHeight = image.height;
+      return Array.from({ length: frameCount }, (_, frameIndex) => ({
+        sx: frameIndex * frameWidth,
+        sy: 0,
+        sw: frameWidth,
+        sh: frameHeight,
+      }));
+    }
+
+    function removeOuterWhiteBackground(image, frameCount) {
+      const offscreen = document.createElement("canvas");
+      offscreen.width = image.width;
+      offscreen.height = image.height;
+      const offCtx = offscreen.getContext("2d");
+      offCtx.drawImage(image, 0, 0);
+
+      const frameWidth = Math.floor(image.width / frameCount);
+      const frameHeight = image.height;
+
+      for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+        const startX = frameIndex * frameWidth;
+        const imageData = offCtx.getImageData(startX, 0, frameWidth, frameHeight);
+        const { data } = imageData;
+        const visited = new Uint8Array(frameWidth * frameHeight);
+        const queue = [];
+
+        function isNearWhite(idx) {
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const a = data[idx + 3];
+          return a > 0 && r > 232 && g > 232 && b > 232;
+        }
+
+        function enqueue(x, y) {
+          if (x < 0 || y < 0 || x >= frameWidth || y >= frameHeight) return;
+          const pos = y * frameWidth + x;
+          if (visited[pos]) return;
+          const idx = pos * 4;
+          if (!isNearWhite(idx)) return;
+          visited[pos] = 1;
+          queue.push(pos);
+        }
+
+        for (let x = 0; x < frameWidth; x++) {
+          enqueue(x, 0);
+          enqueue(x, frameHeight - 1);
+        }
+        for (let y = 0; y < frameHeight; y++) {
+          enqueue(0, y);
+          enqueue(frameWidth - 1, y);
+        }
+
+        while (queue.length) {
+          const pos = queue.shift();
+          const x = pos % frameWidth;
+          const y = Math.floor(pos / frameWidth);
+          const idx = pos * 4;
+          data[idx + 3] = 0;
+          enqueue(x + 1, y);
+          enqueue(x - 1, y);
+          enqueue(x, y + 1);
+          enqueue(x, y - 1);
+        }
+
+        offCtx.putImageData(imageData, startX, 0);
+      }
+
+      return offscreen;
+    }
+
+    function loadImageUrl(url) {
+      return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = url;
+      });
+    }
+
+    function loadPlayerSheet() {
+      const spriteUrls = window.location.protocol === "file:"
+        ? [
+            new URL("./assets/astronaut-bear-sheet.png", window.location.href).href,
+            new URL("assets/astronaut-bear-sheet.png", window.location.href).href,
+          ]
+        : [
+            new URL("/games/super-bear-galaxy/assets/astronaut-bear-sheet.png", window.location.origin).href,
+            new URL("./assets/astronaut-bear-sheet.png", window.location.href).href,
+          ];
+
+      return spriteUrls.reduce((promise, url) => {
+        return promise.catch(() => loadImageUrl(url));
+      }, Promise.reject()).then((image) => {
+        try {
+          playerSheet = removeOuterWhiteBackground(image, 4);
+        } catch {
+          playerSheet = image;
+        }
+        playerFrameBounds = buildDefaultFrameBounds(image, 4);
+      });
+    }
+
+    function currentSector() {
+      return sectors[run.sectorIndex % sectors.length];
+    }
+
+    function currentLevelNumber() {
+      return run.sectorIndex + 1;
+    }
+
+    function isHardMode() {
+      return run.sectorIndex >= NORMAL_LEVELS;
+    }
+
+    function spawnEnemy(isBoss = false) {
+      const side = Math.floor(Math.random() * 4);
+      const pad = 100;
+      let x = 0;
+      let y = 0;
+      if (side === 0) { x = -pad; y = Math.random() * H; }
+      if (side === 1) { x = W + pad; y = Math.random() * H; }
+      if (side === 2) { x = Math.random() * W; y = -pad; }
+      if (side === 3) { x = Math.random() * W; y = H + pad; }
+      const levelScale = run.sectorIndex % NORMAL_LEVELS;
+      const hardBoost = isHardMode() ? 1.45 : 1;
+      enemies.push({
+        x,
+        y,
+        radius: isBoss ? 54 : 28 + Math.min(8, Math.floor(levelScale / 10)),
+        hp: isBoss ? Math.round((220 + levelScale * 8) * hardBoost) : Math.round((34 + levelScale * 4) * hardBoost),
+        maxHp: isBoss ? Math.round((220 + levelScale * 8) * hardBoost) : Math.round((34 + levelScale * 4) * hardBoost),
+        speed: isBoss ? 0.95 + levelScale * 0.01 + (isHardMode() ? 0.2 : 0) : 1 + levelScale * 0.02 + (isHardMode() ? 0.22 : 0),
+        damage: isBoss ? Math.round((20 + levelScale * 0.4) * hardBoost) : Math.round((9 + levelScale * 0.3) * hardBoost),
+        isBoss,
+        pulse: Math.random() * Math.PI * 2,
+      });
+    }
+
+    function createSector() {
+      bullets = [];
+      enemies = [];
+      particles = [];
+      drops = [];
+      run.kills = 0;
+      run.awaitingNext = false;
+      run.goal = 10;
+      run.spawnTimer = 40;
+      run.bossSpawned = false;
+      run.cutsceneTimer = 0;
+      run.cutsceneStarted = false;
+      run.arrivalTimer = 0;
+      run.arrivalStarted = false;
+      run.tutorialStep = run.sectorIndex === 0 ? 0 : 2;
+      run.tutorialDone = run.sectorIndex !== 0;
+      rocket = null;
+
+      player.x = W / 2;
+      player.y = H / 2;
+      player.hp = player.maxHp;
+      player.invuln = 0;
+      player.shootCooldown = 0;
+      player.slashCooldown = 0;
+      player.dodgeCooldown = 0;
+      player.dodgeTimer = 0;
+      sceneScroll = 0;
+
+      const levelScale = run.sectorIndex % NORMAL_LEVELS;
+      const enemyCount = 5 + Math.min(5, Math.floor(levelScale / 8));
+      for (let i = 0; i < enemyCount; i++) spawnEnemy(false);
+      if ((currentLevelNumber() % 10) === 0) {
+        spawnEnemy(true);
+        run.bossSpawned = true;
+      }
+
+      state = "playing";
+      setOverlay(
+        (isHardMode() ? "Hard Mode • " : "") +
+        "Level " + currentLevelNumber() + ": " + currentSector().name,
+        160
+      );
+    }
+
+    function restartRun() {
+      run.sectorIndex = 0;
+      run.victory = false;
+      createSector();
+    }
+
+    function nextSector() {
+      if (run.sectorIndex === TOTAL_LEVELS - 1) {
+        state = "victory";
+        run.victory = true;
+        setOverlay("Super Bear Galaxy cleared", 220);
+        return;
+      }
+      run.sectorIndex += 1;
+      createSector();
+      startArrivalCutscene();
+    }
+
+    function startArrivalCutscene() {
+      run.arrivalStarted = true;
+      run.arrivalTimer = 110;
+      state = "arrival";
+      rocket = {
+        x: W + 220,
+        y: player.y - 18,
+        width: 182,
+        height: 76,
+      };
+      player.x = W + 320;
+      player.y = H / 2;
+      setOverlay(
+        (run.sectorIndex === NORMAL_LEVELS ? "Hard Mode unlocked • " : "") +
+        "Landing on level " + currentLevelNumber(),
+        110
+      );
+    }
+
+    function startRocketCutscene() {
+      if (run.cutsceneStarted) return;
+      run.cutsceneStarted = true;
+      run.awaitingNext = true;
+      run.cutsceneTimer = 138;
+      state = "cutscene";
+      bullets = [];
+      drops = [];
+      enemies = [];
+      rocket = {
+        x: -220,
+        y: player.y - 12,
+        targetX: player.x - 88,
+        targetY: player.y - 20,
+        width: 182,
+        height: 76,
+      };
+      setOverlay("Rocket incoming", 90);
+    }
+
+    function fireShot() {
+      if (player.shootCooldown > 0 || state !== "playing") return;
+      bullets.push({
+        x: player.x,
+        y: player.y - 4,
+        vx: player.facing * 10,
+        vy: 0,
+        ttl: 64,
+        damage: player.attack,
+      });
+      player.shootCooldown = 10;
+    }
+
+    function pulseSlash() {
+      if (player.slashCooldown > 0 || state !== "playing") return;
+      player.slashCooldown = 28;
+      for (const enemy of enemies) {
+        if (distance(player.x, player.y, enemy.x, enemy.y) < 110) {
+          enemy.hp -= player.attack + 14;
+          spawnParticles(enemy.x, enemy.y, currentSector().accent, 8);
+        }
+      }
+    }
+
+    function dodge() {
+      if (player.dodgeCooldown > 0 || state !== "playing") return;
+      const directionX = keys["a"] ? -1 : keys["d"] ? 1 : player.facing;
+      const directionY = keys["w"] ? -1 : keys["s"] ? 1 : 0;
+      const len = Math.hypot(directionX, directionY) || 1;
+      player.x += (directionX / len) * 80;
+      player.y += (directionY / len) * 80;
+      player.x = clamp(player.x, 40, W - 40);
+      player.y = clamp(player.y, 40, H - 40);
+      player.invuln = 18;
+      player.dodgeTimer = 8;
+      player.dodgeCooldown = 70;
+    }
+
+    function spawnParticles(x, y, color, count = 10) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 5,
+          vy: (Math.random() - 0.5) * 5,
+          ttl: 18 + Math.random() * 18,
+          color,
+        });
+      }
+    }
+
+    function updatePlayer() {
+      let moveX = 0;
+      let moveY = 0;
+      if (keys["a"]) moveX -= 1;
+      if (keys["d"]) moveX += 1;
+      if (keys["w"]) moveY -= 1;
+      if (keys["s"]) moveY += 1;
+
+      if (moveX || moveY) {
+        const len = Math.hypot(moveX, moveY) || 1;
+        const moveSpeed = player.dodgeTimer > 0 ? player.speed * 1.8 : player.speed;
+        player.x += (moveX / len) * moveSpeed;
+        player.y += (moveY / len) * moveSpeed;
+        player.facing = moveX < 0 ? -1 : moveX > 0 ? 1 : player.facing;
+      }
+
+      if (run.sectorIndex === 0 && !run.tutorialDone) {
+        if (run.tutorialStep === 0 && moveX !== 0) {
+          run.tutorialStep = 1;
+          setOverlay("Nice. Press Space to dodge-jump forward.", 120);
+        }
+      }
+
+      player.x = clamp(player.x, 36, W - 36);
+      player.y = clamp(player.y, 36, H - 36);
+
+      if (player.shootCooldown > 0) player.shootCooldown -= 1;
+      if (player.slashCooldown > 0) player.slashCooldown -= 1;
+      if (player.dodgeCooldown > 0) player.dodgeCooldown -= 1;
+      if (player.dodgeTimer > 0) player.dodgeTimer -= 1;
+      if (player.invuln > 0) player.invuln -= 1;
+
+      if (run.sectorIndex === 0 && !run.tutorialDone && run.tutorialStep === 1 && player.dodgeTimer > 0) {
+        run.tutorialStep = 2;
+        run.tutorialDone = true;
+        setOverlay("Tutorial done. Blast 10 enemies.", 140);
+      }
+    }
+
+    function updateBullets() {
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const bullet = bullets[i];
+        bullet.x += bullet.vx;
+        bullet.ttl -= 1;
+        if (bullet.ttl <= 0 || bullet.x < -30 || bullet.x > W + 30) {
+          bullets.splice(i, 1);
+          continue;
+        }
+
+        for (const enemy of enemies) {
+          if (distance(bullet.x, bullet.y, enemy.x, enemy.y) < enemy.radius + 6) {
+            enemy.hp -= bullet.damage;
+            spawnParticles(bullet.x, bullet.y, currentSector().accent, 5);
+            bullets.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
+
+    function updateEnemies() {
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        enemy.pulse += 0.05;
+        const dx = player.x - enemy.x;
+        const dy = player.y - enemy.y;
+        const len = Math.hypot(dx, dy) || 1;
+        enemy.x += (dx / len) * enemy.speed;
+        enemy.y += (dy / len) * enemy.speed;
+
+        if (distance(player.x, player.y, enemy.x, enemy.y) < enemy.radius + playerRadius) {
+          if (player.invuln <= 0) {
+            player.hp -= enemy.damage;
+            player.invuln = 28;
+            spawnParticles(player.x, player.y, "#ff8fa6", 10);
+            if (player.hp <= 0) state = "gameover";
+          }
+        }
+
+        if (enemy.hp <= 0) {
+          run.kills += enemy.isBoss ? 4 : 1;
+          drops.push({ x: enemy.x, y: enemy.y, ttl: 220 });
+          spawnParticles(enemy.x, enemy.y, enemy.isBoss ? "#ffe17d" : currentSector().accent, enemy.isBoss ? 18 : 10);
+          enemies.splice(i, 1);
+        }
+      }
+
+      const levelScale = run.sectorIndex % NORMAL_LEVELS;
+      const targetActiveEnemies = Math.min(11, 5 + Math.floor(levelScale / 8) + (isHardMode() ? 2 : 0));
+      const regularEnemies = enemies.filter((enemy) => !enemy.isBoss).length;
+      const killsRemaining = Math.max(0, run.goal - run.kills);
+
+      if (!run.awaitingNext && killsRemaining > 0 && regularEnemies < targetActiveEnemies) {
+        run.spawnTimer -= 1;
+        if (run.spawnTimer <= 0) {
+          spawnEnemy(false);
+          run.spawnTimer = Math.max(16, 52 - levelScale * 0.5 - (isHardMode() ? 10 : 0));
+        }
+      }
+
+      if (!run.awaitingNext && run.kills >= run.goal) {
+        startRocketCutscene();
+      }
+    }
+
+    function updateDrops() {
+      for (let i = drops.length - 1; i >= 0; i--) {
+        const drop = drops[i];
+        drop.ttl -= 1;
+        if (distance(player.x, player.y, drop.x, drop.y) < 34) {
+          player.hp = Math.min(player.maxHp, player.hp + 10);
+          player.attack += 1;
+          drops.splice(i, 1);
+          continue;
+        }
+        if (drop.ttl <= 0) drops.splice(i, 1);
+      }
+    }
+
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const particle = particles[i];
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.ttl -= 1;
+        if (particle.ttl <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function updateCutscene() {
+      if (!rocket) return;
+      run.cutsceneTimer -= 1;
+
+      if (run.cutsceneTimer > 90) {
+        rocket.x += (rocket.targetX - rocket.x) * 0.08;
+        rocket.y += (rocket.targetY - rocket.y) * 0.08;
+      } else if (run.cutsceneTimer > 50) {
+        player.x += (rocket.x + 92 - player.x) * 0.12;
+        player.y += (rocket.y + 10 - player.y) * 0.12;
+        setOverlay("Boarding rocket", 8);
+      } else {
+        rocket.x += 12;
+        rocket.y -= 7;
+        player.x = rocket.x + 92;
+        player.y = rocket.y + 10;
+        setOverlay("Flying to next planet", 8);
+      }
+
+      if (run.cutsceneTimer <= 0) nextSector();
+    }
+
+    function updateArrivalCutscene() {
+      if (!rocket) return;
+      run.arrivalTimer -= 1;
+
+      if (run.arrivalTimer > 72) {
+        rocket.x += (W * 0.52 - rocket.x) * 0.08;
+        rocket.y += ((H / 2 - 18) - rocket.y) * 0.08;
+      } else if (run.arrivalTimer > 36) {
+        player.x += (rocket.x - 92 - player.x) * 0.14;
+        player.y += ((rocket.y + 14) - player.y) * 0.14;
+        setOverlay("Super Bear arrives", 8);
+      } else {
+        const danceOffset = Math.sin(run.arrivalTimer * 0.55) * 16;
+        player.x = rocket.x - 108 + danceOffset;
+        player.y = rocket.y + 16 + Math.cos(run.arrivalTimer * 0.45) * 4;
+        player.facing = danceOffset >= 0 ? 1 : -1;
+        setOverlay("Victory dance", 8);
+      }
+
+      if (run.arrivalTimer <= 0) {
+        rocket = null;
+        state = "playing";
+        setOverlay(
+          (isHardMode() ? "Hard Mode • " : "") +
+          "Level " + currentLevelNumber() + ": " + currentSector().name,
+          120
+        );
+      }
+    }
+
+    function update() {
+      frame += 1;
+      sceneScroll += 1.5;
+      if (overlayTimer > 0) overlayTimer -= 1;
+      if (state === "cutscene") {
+        updateCutscene();
+        updateParticles();
+        return;
+      }
+      if (state === "arrival") {
+        updateArrivalCutscene();
+        updateParticles();
+        return;
+      }
+      if (state !== "playing") return;
+      updatePlayer();
+      updateBullets();
+      updateEnemies();
+      updateDrops();
+      updateParticles();
+    }
+
+    function drawOutlinedText(text, x, y, options = {}) {
+      ctx.font = options.font || "20px Trebuchet MS";
+      ctx.textAlign = options.align || "left";
+      ctx.textBaseline = options.baseline || "top";
+      ctx.fillStyle = "rgba(0,0,0,0.82)";
+      ctx.fillText(text, x + 2, y + 2);
+      ctx.fillStyle = options.color || "#ffffff";
+      ctx.fillText(text, x, y);
+    }
+
+    function drawBackground() {
+      const sector = currentSector();
+      const gradient = ctx.createLinearGradient(0, 0, 0, H);
+      gradient.addColorStop(0, sector.sky[0]);
+      gradient.addColorStop(1, sector.sky[1]);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, W, H);
+
+      for (let i = 0; i < 90; i++) {
+        const x = (i * 149 + sceneScroll * 0.18) % (W + 120) - 60;
+        const y = 36 + (i * 67) % 320;
+        ctx.globalAlpha = 0.4 + (i % 3) * 0.15;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(x, y, 2, 2);
+      }
+      ctx.globalAlpha = 1;
+
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = i % 2 ? "rgba(255,255,255,0.06)" : "rgba(123,228,255,0.08)";
+        ctx.beginPath();
+        ctx.arc((220 + i * 250 + sceneScroll * (0.08 + i * 0.01)) % (W + 220) - 110, 120 + i * 70, 38 + i * 12, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+    }
+
+    function drawFallbackAstronautBear() {
+      const moving = keys["w"] || keys["a"] || keys["s"] || keys["d"];
+      const walkFrame = moving ? Math.floor(frame / 10) % 2 : 0;
+      const celebrate = state === "arrival";
+      const px = 4;
+
+      ctx.save();
+      ctx.translate(player.x, player.y - 8);
+      if (player.facing < 0) ctx.scale(-1, 1);
+      ctx.globalAlpha = player.invuln > 0 && frame % 6 < 3 ? 0.55 : 1;
+
+      function rect(x, y, w, h, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(Math.round(x * px), Math.round(y * px), Math.round(w * px), Math.round(h * px));
+      }
+
+      const bx = -12;
+      const by = -18;
+
+      rect(bx + 4, by + 0, 4, 1, "#122033");
+      rect(bx + 2, by + 1, 8, 1, "#122033");
+      rect(bx + 1, by + 2, 10, 1, "#122033");
+      rect(bx + 1, by + 3, 1, 6, "#122033");
+      rect(bx + 10, by + 3, 1, 6, "#122033");
+      rect(bx + 2, by + 8, 8, 1, "#122033");
+
+      rect(bx + 2, by + 2, 8, 6, "#eef8ff");
+      rect(bx + 2, by + 2, 1, 6, "#7be4ff");
+      rect(bx + 9, by + 2, 1, 6, "#7be4ff");
+      rect(bx + 4, by + 1, 2, 1, "#eef8ff");
+      rect(bx + 4, by + 2, 2, 1, "#7be4ff");
+      rect(bx + 3, by + 3, 6, 4, "#ff9800");
+      rect(bx + 3, by + 7, 6, 1, "#ffb120");
+      rect(bx + 4, by + 4, 1, 2, "#0d1118");
+      rect(bx + 7, by + 4, 1, 2, "#0d1118");
+      rect(bx + 5, by + 6, 2, 1, "#0d1118");
+      rect(bx + 4, by + 7, 4, 1, "#d76a00");
+
+      rect(bx + 2, by + 8, 8, 1, "#d9f1ff");
+      rect(bx + 1, by + 9, 10, 1, "#122033");
+      rect(bx + 2, by + 10, 8, 1, "#eef8ff");
+      rect(bx + 3, by + 11, 6, 1, "#eef8ff");
+      rect(bx + 4, by + 12, 4, 1, "#eef8ff");
+
+      rect(bx + 2, by + 13, 8, 1, "#122033");
+      rect(bx + 2, by + 14, 8, 6, "#ffffff");
+      rect(bx + 3, by + 15, 6, 4, "#e9f3ff");
+      rect(bx + 4, by + 15, 4, 2, "#24a8ff");
+      rect(bx + 4, by + 17, 1, 1, "#ff5573");
+      rect(bx + 5, by + 17, 1, 1, "#ffd84d");
+      rect(bx + 6, by + 17, 1, 1, "#5ceeff");
+      rect(bx + 7, by + 17, 1, 1, "#ff9348");
+
+      if (celebrate || player.slashCooldown > 14) {
+        rect(bx + 10, by + 13, 2, 1, "#122033");
+        rect(bx + 11, by + 10, 1, 3, "#ffffff");
+        rect(bx + 11, by + 7, 1, 3, "#ffffff");
+        rect(bx + 10, by + 6, 2, 1, "#5ceeff");
+      } else {
+        const swing = walkFrame === 0 ? 0 : 1;
+        rect(bx + 10, by + 14, 2, 1, "#122033");
+        rect(bx + 11, by + 15, 1, 3, "#ffffff");
+        rect(bx + 11 + swing, by + 18, 1, 2, "#ffffff");
+        rect(bx + 10 + swing, by + 20, 2, 1, "#5ceeff");
+      }
+
+      rect(bx + 0, by + 14, 2, 1, "#122033");
+      rect(bx + 0, by + 15, 1, 3, "#ffffff");
+      rect(bx + (walkFrame === 0 ? 0 : 1), by + 18, 1, 2, "#ffffff");
+      rect(bx + (walkFrame === 0 ? 0 : 1), by + 20, 2, 1, "#5ceeff");
+
+      const leftLegShift = walkFrame === 0 ? 0 : 1;
+      const rightLegShift = walkFrame === 0 ? 1 : 0;
+      rect(bx + 3 + leftLegShift, by + 20, 2, 4, "#ffffff");
+      rect(bx + 6 - rightLegShift, by + 20, 2, 4, "#ffffff");
+      rect(bx + 3 + leftLegShift, by + 24, 3, 1, "#5ceeff");
+      rect(bx + 5 - rightLegShift, by + 24, 3, 1, "#5ceeff");
+
+      rect(bx + 0, by + 14, 1, 7, "#122033");
+      rect(bx + 11, by + 13, 1, 8, "#122033");
+      rect(bx + 2, by + 24, 7, 1, "#122033");
+      rect(bx + 1, by + 10, 1, 2, "#7be4ff");
+      rect(bx + 1, by + 12, 1, 3, "#00b6ff");
+      ctx.restore();
+    }
+
+    function drawPlayer() {
+      if (!playerSheet) {
+        drawFallbackAstronautBear();
+        return;
+      }
+      const moving = keys["w"] || keys["a"] || keys["s"] || keys["d"];
+      const frameIndex = player.slashCooldown > 14 ? 3 : moving ? 1 + (Math.floor(frame / 10) % 2) : 0;
+      const source = playerFrameBounds[frameIndex];
+      const targetHeight = 142;
+      const targetWidth = targetHeight * (source.sw / source.sh);
+
+      ctx.save();
+      ctx.translate(player.x, player.y - 4);
+      if (player.facing < 0) ctx.scale(-1, 1);
+      ctx.globalAlpha = player.invuln > 0 && frame % 6 < 3 ? 0.55 : 1;
+      ctx.drawImage(
+        playerSheet,
+        source.sx,
+        source.sy,
+        source.sw,
+        source.sh,
+        -targetWidth / 2,
+        -targetHeight / 2,
+        targetWidth,
+        targetHeight
+      );
+      ctx.restore();
+    }
+
+    function drawEnemies() {
+      for (const enemy of enemies) {
+        ctx.save();
+        ctx.translate(enemy.x, enemy.y);
+        const pulse = 1 + Math.sin(enemy.pulse) * 0.06;
+        ctx.scale(pulse, pulse);
+        ctx.fillStyle = enemy.isBoss ? "#ffd86b" : currentSector().accent;
+        ctx.beginPath();
+        ctx.arc(0, 0, enemy.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#111927";
+        ctx.fillRect(-enemy.radius * 0.38, -10, 10, 12);
+        ctx.fillRect(enemy.radius * 0.12, -10, 10, 12);
+        ctx.fillRect(-enemy.radius * 0.24, enemy.radius * 0.18, enemy.radius * 0.48, 6);
+        ctx.restore();
+
+        if (enemy.isBoss) {
+          ctx.fillStyle = "rgba(0,0,0,0.6)";
+          ctx.fillRect(enemy.x - 60, enemy.y - 80, 120, 10);
+          ctx.fillStyle = "#ff7e8f";
+          ctx.fillRect(enemy.x - 58, enemy.y - 78, 116 * (enemy.hp / enemy.maxHp), 6);
+        }
+      }
+    }
+
+    function drawEffects() {
+      for (const bullet of bullets) {
+        ctx.fillStyle = "#7cecff";
+        ctx.fillRect(bullet.x - 8, bullet.y - 3, 16, 6);
+      }
+
+      if (player.slashCooldown > 18) {
+        ctx.fillStyle = "rgba(123, 228, 255, 0.2)";
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, 96, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const drop of drops) {
+        ctx.fillStyle = "#ffd76d";
+        ctx.beginPath();
+        ctx.arc(drop.x, drop.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const particle of particles) {
+        ctx.globalAlpha = particle.ttl / 36;
+        ctx.fillStyle = particle.color;
+        ctx.fillRect(particle.x, particle.y, 5, 5);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawRocket() {
+      if (!rocket) return;
+      ctx.save();
+      ctx.translate(rocket.x, rocket.y);
+      ctx.fillStyle = "#d8f0ff";
+      ctx.beginPath();
+      ctx.moveTo(0, rocket.height / 2);
+      ctx.lineTo(34, 0);
+      ctx.lineTo(136, 0);
+      ctx.lineTo(rocket.width, rocket.height / 2);
+      ctx.lineTo(136, rocket.height);
+      ctx.lineTo(34, rocket.height);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#6fe0ff";
+      ctx.fillRect(44, 14, 64, 48);
+      ctx.fillStyle = "#ff7c68";
+      ctx.fillRect(10, 26, 24, 22);
+      ctx.fillStyle = "#ffd76d";
+      ctx.beginPath();
+      ctx.arc(124, 38, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(123,228,255,0.7)";
+      ctx.fillRect(-26, 24, 24, 10);
+      ctx.fillRect(-44, 28, 18, 4);
+      ctx.restore();
+    }
+
+    function drawHud() {
+      ctx.fillStyle = "rgba(0,0,0,0.58)";
+      ctx.fillRect(18, 18, 430, 156);
+      ctx.fillRect(W - 330, 18, 290, 122);
+
+      drawOutlinedText("Super Bear Galaxy", 34, 30, { font: "bold 26px Trebuchet MS", color: "#ffffff" });
+      drawOutlinedText(
+        "Level " + currentLevelNumber() + " • " + currentSector().name + (isHardMode() ? " • Hard Mode" : ""),
+        34,
+        60,
+        { font: "18px Trebuchet MS", color: currentSector().accent }
+      );
+
+      ctx.fillStyle = "#34131a";
+      ctx.fillRect(34, 92, 190, 14);
+      ctx.fillStyle = "#ff6b86";
+      ctx.fillRect(34, 92, 190 * (Math.max(0, player.hp) / player.maxHp), 14);
+      drawOutlinedText("HP " + Math.max(0, player.hp) + " / " + player.maxHp, 236, 86, { font: "16px Trebuchet MS", color: "#fff4f7" });
+
+      drawOutlinedText("Power " + player.attack, 34, 120, { font: "16px Trebuchet MS", color: "#d8f7ff" });
+      drawOutlinedText("Defeated " + run.kills + " / " + run.goal, 144, 120, { font: "16px Trebuchet MS", color: "#ffe4a3" });
+      drawOutlinedText("Heal orbs boost HP + power", 34, 144, { font: "15px Trebuchet MS", color: "#d9edff" });
+
+      drawOutlinedText("Enemies: " + enemies.length, W - 52, 28, { font: "17px Trebuchet MS", align: "right", color: "#c7eeff" });
+      drawOutlinedText("Slash: " + (player.slashCooldown > 0 ? "Cooling" : "Ready"), W - 52, 56, { font: "17px Trebuchet MS", align: "right", color: "#ffe17d" });
+      drawOutlinedText("Dodge: " + (player.dodgeCooldown > 0 ? "Cooling" : "Ready"), W - 52, 84, { font: "17px Trebuchet MS", align: "right", color: "#99ffbc" });
+
+      if (overlayTimer > 0) {
+        drawOutlinedText(overlayText, W / 2, 34, { font: "bold 28px Trebuchet MS", align: "center", color: "#ffe176" });
+      }
+    }
+
+    function drawPanels() {
+      if (state === "start") {
+        ctx.fillStyle = "rgba(0,0,0,0.68)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Super Bear Galaxy", W / 2, H / 2 - 54, { font: "bold 60px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("Arcade space survival with the astronaut bear", W / 2, H / 2 + 10, { font: "24px Trebuchet MS", align: "center", color: "#92dcff" });
+        drawOutlinedText("Press Enter to launch", W / 2, H / 2 + 52, { font: "bold 26px Trebuchet MS", align: "center", color: "#ffe176" });
+      }
+
+      if (state === "gameover") {
+        ctx.fillStyle = "rgba(0,0,0,0.68)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Mission Failed", W / 2, H / 2 - 34, { font: "bold 52px Trebuchet MS", align: "center", color: "#ff8aa5" });
+        drawOutlinedText("Press R to restart the run", W / 2, H / 2 + 24, { font: "24px Trebuchet MS", align: "center", color: "#ffffff" });
+      }
+
+      if (state === "victory") {
+        ctx.fillStyle = "rgba(0,0,0,0.72)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Galaxy Cleared", W / 2, H / 2 - 44, { font: "bold 50px Trebuchet MS", align: "center", color: "#ffe176" });
+        drawOutlinedText("100 levels cleared. Press R to play again", W / 2, H / 2 + 18, { font: "24px Trebuchet MS", align: "center", color: "#dff8ff" });
+      }
+
+      if (state === "cutscene") {
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      if (state === "arrival") {
+        ctx.fillStyle = "rgba(0,0,0,0.08)";
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      if (state === "playing" && run.sectorIndex === 0 && !run.tutorialDone) {
+        ctx.fillStyle = "rgba(0,0,0,0.46)";
+        ctx.fillRect(34, H - 170, 420, 92);
+        ctx.strokeStyle = "rgba(123,228,255,0.25)";
+        ctx.strokeRect(34, H - 170, 420, 92);
+        drawOutlinedText("L1 Tutorial", 54, H - 154, { font: "bold 24px Trebuchet MS", color: "#7be4ff" });
+        drawOutlinedText(
+          run.tutorialStep === 0
+            ? "Walk with A / D or WASD."
+            : "Press Space to do a quick dodge jump.",
+          54,
+          H - 118,
+          { font: "20px Trebuchet MS", color: "#ffffff" }
+        );
+      }
+
+    }
+
+    function draw() {
+      drawBackground();
+      drawEffects();
+      drawEnemies();
+      drawRocket();
+      drawPlayer();
+      drawHud();
+      drawPanels();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      keys[key] = true;
+
+      if (state === "start" && event.key === "Enter") createSector();
+      if ((state === "gameover" || state === "victory") && key === "r") restartRun();
+      if (state !== "playing") return;
+
+      if (key === "j") fireShot();
+      if (key === "k") pulseSlash();
+      if (event.code === "Space") {
+        event.preventDefault();
+        dodge();
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      keys[event.key.toLowerCase()] = false;
+    });
+
+    canvas.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) return;
+      if (state === "playing") fireShot();
+    });
+
+    loadPlayerSheet()
+      .then(() => {
+        state = "start";
+        setOverlay("Press Enter to start", 220);
+        loop();
+      })
+      .catch(() => {
+        playerSheet = null;
+        playerFrameBounds = [];
+        state = "start";
+        setOverlay("Fallback suit loaded", 180);
+        loop();
+      });
+  </script>
+</body>
+</html>

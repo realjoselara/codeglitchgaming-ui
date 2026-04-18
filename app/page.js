@@ -39,11 +39,11 @@ export default function Home() {
     <div className="soon-root">
       <div className="soon-wrap" role="application">
         <header className="soon-header">
-          <div className="soon-brand" aria-label="CodeGlitch Gaming">
+          <div className="soon-brand" aria-label="CodeGlitchGaming">
             <Image
               className="soon-logo"
               src="/codeglitchgaming-logo.png"
-              alt="CodeGlitch Gaming"
+              alt="CodeGlitchGaming"
               width={64}
               height={64}
               unoptimized
@@ -51,7 +51,7 @@ export default function Home() {
             />
 
             <div>
-              <h1>CodeGlitch Gaming</h1>
+              <h1>CodeGlitchGaming</h1>
               <p className="soon-sub">codeglitchgaming.us</p>
             </div>
           </div>
@@ -76,7 +76,7 @@ export default function Home() {
             <Image
               className="soon-badge"
               src="/codeglitchgaming-logo.png"
-              alt="CodeGlitch Gaming mark"
+              alt="CodeGlitchGaming mark"
               width={200}
               height={200}
               unoptimized
@@ -135,7 +135,7 @@ export default function Home() {
             </section>
 
             <section className="soon-card" aria-label="What to expect">
-              <h3 className="soon-title">What to Expect</h3>
+              <h3 className="soon-title">What to Expect</h3>            
               <ul className="soon-list">
                 <li>Weekly streams and community tournaments</li>
                 <li>Glitch-themed edits and short-form highlights</li>
@@ -146,7 +146,7 @@ export default function Home() {
         </main>
 
         <footer className="soon-footer">
-          <p className="soon-small">© {year} CodeGlitch Gaming</p>
+          <p className="soon-small">© {year} CodeGlitchGaming</p>
 
           <nav className="soon-social" aria-label="Social links">
             <a

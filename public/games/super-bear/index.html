@@ -1244,12 +1244,16 @@
         ctx.fillRect(0, 0, W, H);
         drawOutlinedText("Super Bear", W / 2, H / 2 - 48, { font: "bold 64px Trebuchet MS", align: "center", color: "#ffffff" });
         drawOutlinedText("Left click to play", W / 2, H / 2 + 20, { font: "bold 28px Trebuchet MS", align: "center", color: "#23d6ff" });
+        drawOutlinedText("L1: Walk + jump tutorial", W / 2, H / 2 + 64, { font: "20px Trebuchet MS", align: "center", color: "#ffe37b" });
       }
       if (state === "intro") {
         ctx.fillStyle = "rgba(0,0,0,0.38)";
         ctx.fillRect(0, 0, W, H);
         drawOutlinedText("Get ready for " + currentLevel().name, W / 2, H / 2 - 20, { font: "bold 34px Trebuchet MS", align: "center", color: "#ffffff" });
         drawOutlinedText(currentLevel().rule, W / 2, H / 2 + 26, { font: "22px Trebuchet MS", align: "center", color: currentLevel().accent });
+        if (run.levelIndex === 0) {
+          drawOutlinedText("L1: Walk + jump tutorial", W / 2, H / 2 + 62, { font: "18px Trebuchet MS", align: "center", color: "#ffe37b" });
+        }
       }
       if (state === "between") {
         ctx.fillStyle = "rgba(0,0,0,0.55)";
