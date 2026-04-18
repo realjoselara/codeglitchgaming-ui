@@ -926,15 +926,16 @@
         ctx.fillStyle = "rgba(0,0,0,0.55)";
         ctx.fillRect(0, 0, W, H);
         ctx.fillStyle = "rgba(4, 10, 18, 0.82)";
-        ctx.fillRect(W / 2 - 310, H / 2 - 150, 620, 300);
+        ctx.fillRect(W / 2 - 310, H / 2 - 162, 620, 324);
         ctx.strokeStyle = "rgba(255,255,255,0.18)";
-        ctx.strokeRect(W / 2 - 310, H / 2 - 150, 620, 300);
-        drawOutlinedText("Level Clear", W / 2, H / 2 - 110, { font: "bold 42px Trebuchet MS", align: "center", color: "#ffe37b" });
-        drawOutlinedText("Required defeats reached.", W / 2, H / 2 - 56, { font: "22px Trebuchet MS", align: "center", color: "#ffffff" });
-        drawOutlinedText("Reward: +" + run.levelRewardCoins + " coins  •  +" + run.levelRewardHeal + " HP", W / 2, H / 2 - 16, { font: "22px Trebuchet MS", align: "center", color: "#8effc8" });
-        drawOutlinedText("Next: Level " + (run.levelIndex + 2) + " - " + levels[run.levelIndex + 1].name, W / 2, H / 2 + 28, { font: "24px Trebuchet MS", align: "center", color: "#d8f5ff" });
-        drawOutlinedText(levels[run.levelIndex + 1].rule, W / 2, H / 2 + 70, { font: "18px Trebuchet MS", align: "center", color: levels[run.levelIndex + 1].accent });
-        drawOutlinedText("Press Enter to continue", W / 2, H / 2 + 118, { font: "bold 26px Trebuchet MS", align: "center", color: "#ffffff" });
+        ctx.strokeRect(W / 2 - 310, H / 2 - 162, 620, 324);
+        drawOutlinedText("Level Clear", W / 2, H / 2 - 122, { font: "bold 42px Trebuchet MS", align: "center", color: "#ffe37b" });
+        drawOutlinedText("Required defeats reached.", W / 2, H / 2 - 72, { font: "22px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("Current coins: " + player.coins, W / 2, H / 2 - 32, { font: "20px Trebuchet MS", align: "center", color: "#ffd76d" });
+        drawOutlinedText("Reward on continue: +" + run.levelRewardCoins + " coins  •  +" + run.levelRewardHeal + " HP", W / 2, H / 2 + 2, { font: "21px Trebuchet MS", align: "center", color: "#8effc8" });
+        drawOutlinedText("Next: Level " + (run.levelIndex + 2) + " - " + levels[run.levelIndex + 1].name, W / 2, H / 2 + 48, { font: "24px Trebuchet MS", align: "center", color: "#d8f5ff" });
+        drawOutlinedText(levels[run.levelIndex + 1].rule, W / 2, H / 2 + 90, { font: "18px Trebuchet MS", align: "center", color: levels[run.levelIndex + 1].accent });
+        drawOutlinedText("Press Enter to continue", W / 2, H / 2 + 134, { font: "bold 26px Trebuchet MS", align: "center", color: "#ffffff" });
       }
       if (paused) {
         ctx.fillStyle = "rgba(0,0,0,0.48)";
