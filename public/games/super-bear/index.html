@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Super Bear: Ten Level Rush</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top, rgba(0, 229, 255, 0.16), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(255, 210, 74, 0.18), transparent 22%),
+        #07131f;
+      color: #f2fbff;
+      font-family: "Trebuchet MS", system-ui, sans-serif;
+    }
+
+    .game-wrap {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 6px solid #061018;
+      border-radius: 24px;
+      background: #0d223b;
+      box-shadow: 0 18px 70px rgba(0, 0, 0, 0.45);
+    }
+
+    .help {
+      position: absolute;
+      right: 28px;
+      bottom: 24px;
+      color: #d5eef9;
+      font-size: 12px;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+      text-align: right;
+      line-height: 1.4;
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: rgba(3, 10, 18, 0.38);
+    }
+  </style>
+</head>
+<body>
+  <div class="game-wrap">
+    <canvas id="game" width="1280" height="720"></canvas>
+    <div class="help">WASD move<br />Left click shoot<br />Right click melee<br />Space dodge<br />B shop</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const keys = Object.create(null);
+    let mouseX = W / 2;
+    let mouseY = H / 2;
+    let frame = 0;
+    let state = "loading";
+    let overlayTimer = 0;
+    let overlayText = "";
+    let paused = false;
+    let shopOpen = false;
+    let victory = false;
+
+    const assets = {
+      playerSheet: new Image(),
+      enemySheet: new Image(),
+    };
+
+    function stripLightBackground(image) {
+      const offscreen = document.createElement("canvas");
+      offscreen.width = image.width;
+      offscreen.height = image.height;
+      const offCtx = offscreen.getContext("2d");
+      offCtx.drawImage(image, 0, 0);
+      const imageData = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
+      const { data } = imageData;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        if (a === 0) continue;
+
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const saturation = max - min;
+        const isNearWhite = r > 236 && g > 236 && b > 236;
+        const isPaleGray = r > 220 && g > 220 && b > 220 && saturation < 12;
+
+        if (isNearWhite || isPaleGray) {
+          data[i + 3] = 0;
+        }
+      }
+
+      offCtx.putImageData(imageData, 0, 0);
+      return offscreen;
+    }
+
+    assets.playerSheet.src = "./assets/super-bear-sheet-v2.png";
+    assets.enemySheet.src = "./assets/enemy-sheet-v2.png";
+
+    const levels = [
+      { name: "Neon Rooftops", theme: ["#11233d", "#0d1827"], accent: "#23d6ff", enemyTint: "#7fe6ff", goal: 8, enemySpeed: 0.8, enemyHp: 24, boss: false, background: "rooftops", rule: "Defeat 8 rooftop monsters to advance." },
+      { name: "Arcade Alley", theme: ["#25153f", "#130d25"], accent: "#ff6bd6", enemyTint: "#ffc56b", goal: 10, enemySpeed: 0.86, enemyHp: 28, boss: false, background: "arcade", rule: "Defeat 10 arcade monsters to advance." },
+      { name: "Glitch Garden", theme: ["#143628", "#0d1d17"], accent: "#71ff8a", enemyTint: "#8cf6a2", goal: 12, enemySpeed: 0.92, enemyHp: 32, boss: false, background: "garden", rule: "Defeat 12 garden monsters to advance." },
+      { name: "Cyber Canal", theme: ["#0f3141", "#091722"], accent: "#79d8ff", enemyTint: "#a4c9ff", goal: 14, enemySpeed: 0.98, enemyHp: 36, boss: false, background: "canal", rule: "Defeat 14 canal monsters to advance." },
+      { name: "Molten Metro", theme: ["#40180e", "#1e0d09"], accent: "#ff9256", enemyTint: "#ffbf8f", goal: 10, enemySpeed: 1.05, enemyHp: 42, boss: true, background: "metro", rule: "Defeat 10 metro monsters and the boss to unlock the exit." },
+      { name: "Storm Circuit", theme: ["#1d2543", "#101624"], accent: "#9cb4ff", enemyTint: "#ffd56e", goal: 16, enemySpeed: 1.08, enemyHp: 44, boss: false, background: "storm", rule: "Defeat 16 storm monsters to advance." },
+      { name: "Shadow Harbor", theme: ["#1e2a34", "#0d141b"], accent: "#9af0ff", enemyTint: "#bdd3f7", goal: 18, enemySpeed: 1.12, enemyHp: 48, boss: false, background: "harbor", rule: "Defeat 18 harbor monsters to advance." },
+      { name: "Comet Ridge", theme: ["#34244c", "#171022"], accent: "#c98fff", enemyTint: "#ffb2de", goal: 20, enemySpeed: 1.18, enemyHp: 50, boss: false, background: "comet", rule: "Defeat 20 comet ridge monsters to advance." },
+      { name: "Titan Foundry", theme: ["#3b2513", "#181008"], accent: "#ffd46a", enemyTint: "#ffddb5", goal: 22, enemySpeed: 1.25, enemyHp: 54, boss: false, background: "foundry", rule: "Defeat 22 foundry monsters to advance." },
+      { name: "Final Core", theme: ["#3e1020", "#140813"], accent: "#ff5f8a", enemyTint: "#ffc3d1", goal: 14, enemySpeed: 1.32, enemyHp: 64, boss: true, background: "finalcore", rule: "Defeat 14 final-core monsters, then destroy the last boss to win." },
+    ];
+
+    const player = {
+      x: W / 2,
+      y: H / 2,
+      radius: 30,
+      speed: 4.1,
+      hp: 120,
+      maxHp: 120,
+      coins: 0,
+      attack: 14,
+      facing: 1,
+      shootCooldown: 0,
+      meleeCooldown: 0,
+      dodgeCooldown: 0,
+      dodgeTimer: 0,
+      vx: 0,
+      vy: 0,
+      invuln: 0,
+      sprite: 0,
+    };
+
+    const run = {
+      levelIndex: 0,
+      enemiesDefeated: 0,
+      levelKills: 0,
+      bossSpawned: false,
+      awaitingNext: false,
+      spawnTimer: 0,
+      sceneOffset: 0,
+      levelRewardCoins: 0,
+      levelRewardHeal: 0,
+    };
+
+    const shop = {
+      boost: { label: "Power Claw", cost: 12, apply() { player.attack += 4; } },
+      boots: { label: "Turbo Boots", cost: 14, apply() { player.speed += 0.24; } },
+      heart: { label: "Honey Snack", cost: 16, apply() { player.maxHp += 18; player.hp = Math.min(player.maxHp, player.hp + 28); } },
+    };
+
+    const bullets = [];
+    const enemies = [];
+    const particles = [];
+    const drops = [];
+    const pulses = [];
+
+    function currentLevel() {
+      return levels[run.levelIndex];
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function distance(ax, ay, bx, by) {
+      return Math.hypot(ax - bx, ay - by);
+    }
+
+    function rectPointCollide(x, y, w, h, px, py) {
+      return px >= x && px <= x + w && py >= y && py <= y + h;
+    }
+
+    function canvasPoint(event) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (event.clientX - rect.left) * (canvas.width / rect.width),
+        y: (event.clientY - rect.top) * (canvas.height / rect.height),
+      };
+    }
+
+    function drawOutlinedText(text, x, y, options = {}) {
+      const font = options.font || "20px Trebuchet MS";
+      const align = options.align || "left";
+      const baseline = options.baseline || "top";
+      const color = options.color || "#ffffff";
+      ctx.font = font;
+      ctx.textAlign = align;
+      ctx.textBaseline = baseline;
+      ctx.fillStyle = "rgba(0,0,0,0.82)";
+      ctx.fillText(text, x + 2, y + 2);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, y);
+    }
+
+    function setOverlay(text, duration = 120) {
+      overlayText = text;
+      overlayTimer = duration;
+    }
+
+    function resetRun() {
+      player.x = W / 2;
+      player.y = H / 2;
+      player.hp = player.maxHp;
+      player.coins = 0;
+      player.attack = 14;
+      player.speed = 4.1;
+      player.shootCooldown = 0;
+      player.meleeCooldown = 0;
+      player.dodgeCooldown = 0;
+      player.dodgeTimer = 0;
+      player.invuln = 0;
+      bullets.length = 0;
+      enemies.length = 0;
+      particles.length = 0;
+      drops.length = 0;
+      pulses.length = 0;
+      run.levelIndex = 0;
+      run.enemiesDefeated = 0;
+      run.levelKills = 0;
+      run.bossSpawned = false;
+      run.awaitingNext = false;
+      run.spawnTimer = 0;
+      run.sceneOffset = 0;
+      run.levelRewardCoins = 0;
+      run.levelRewardHeal = 0;
+      state = "intro";
+      paused = false;
+      shopOpen = false;
+      victory = false;
+      setOverlay("Level 1: " + currentLevel().name, 140);
+      spawnWave();
+    }
+
+    function loadAssets() {
+      return Promise.all(
+        Object.values(assets).map(
+          (image) =>
+            new Promise((resolve, reject) => {
+              image.onload = resolve;
+              image.onerror = reject;
+            })
+        )
+      );
+    }
+
+    function spriteFrame(sheet, index) {
+      const frameWidth = sheet.width / 4;
+      return {
+        sx: frameWidth * index,
+        sy: 0,
+        sw: frameWidth,
+        sh: sheet.height,
+      };
+    }
+
+    function drawSprite(sheet, index, x, y, width, height, flip = false, alpha = 1) {
+      const { sx, sy, sw, sh } = spriteFrame(sheet, index);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(x, y);
+      if (flip) ctx.scale(-1, 1);
+      ctx.drawImage(sheet, sx, sy, sw, sh, -width / 2, -height / 2, width, height);
+      ctx.restore();
+    }
+
+    function spawnEnemy(isBoss = false) {
+      const level = currentLevel();
+      const side = Math.floor(Math.random() * 4);
+      const pad = 80;
+      let x = W / 2;
+      let y = H / 2;
+      if (side === 0) { x = -pad; y = Math.random() * H; }
+      if (side === 1) { x = W + pad; y = Math.random() * H; }
+      if (side === 2) { x = Math.random() * W; y = -pad; }
+      if (side === 3) { x = Math.random() * W; y = H + pad; }
+
+      enemies.push({
+        x,
+        y,
+        radius: isBoss ? 58 : 34,
+        hp: isBoss ? level.enemyHp * 7 : level.enemyHp,
+        maxHp: isBoss ? level.enemyHp * 7 : level.enemyHp,
+        speed: isBoss ? level.enemySpeed * 0.72 : level.enemySpeed,
+        damage: isBoss ? 18 + run.levelIndex * 2 : 8 + run.levelIndex,
+        frame: isBoss ? 3 : 0,
+        attackCooldown: 0,
+        isBoss,
+      });
+    }
+
+    function spawnWave() {
+      enemies.length = 0;
+      bullets.length = 0;
+      drops.length = 0;
+      pulses.length = 0;
+      run.levelKills = 0;
+      run.bossSpawned = false;
+      run.spawnTimer = 30;
+      const level = currentLevel();
+      const baseCount = Math.min(6, 2 + Math.floor(run.levelIndex / 2));
+      for (let i = 0; i < baseCount; i++) spawnEnemy(false);
+      if (level.boss) {
+        spawnEnemy(true);
+        run.bossSpawned = true;
+      }
+    }
+
+    function createBurst(x, y, color, count = 8) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          ttl: 16 + Math.random() * 10,
+          color,
+        });
+      }
+    }
+
+    function nextLevel() {
+      const completedLevelIndex = run.levelIndex;
+      const rewardCoins = 12 + completedLevelIndex * 4;
+      const rewardHeal = Math.min(player.maxHp - player.hp, 18 + completedLevelIndex * 3);
+      player.coins += rewardCoins;
+      player.hp += rewardHeal;
+      run.levelRewardCoins = rewardCoins;
+      run.levelRewardHeal = rewardHeal;
+
+      run.levelIndex++;
+      if (run.levelIndex >= levels.length) {
+        victory = true;
+        state = "victory";
+        return;
+      }
+      player.x = W / 2;
+      player.y = H / 2;
+      player.hp = Math.min(player.maxHp, player.hp + 24);
+      run.awaitingNext = false;
+      setOverlay("Level " + (run.levelIndex + 1) + ": " + currentLevel().name, 140);
+      spawnWave();
+      state = "playing";
+    }
+
+    function clearLevelIfReady() {
+      const level = currentLevel();
+      if (run.levelKills < level.goal) return;
+      if (level.boss && enemies.some((enemy) => enemy.isBoss)) return;
+      if (!level.boss) enemies.length = 0;
+      run.awaitingNext = true;
+      state = "between";
+    }
+
+    function updatePlayer() {
+      if (player.shootCooldown > 0) player.shootCooldown--;
+      if (player.meleeCooldown > 0) player.meleeCooldown--;
+      if (player.dodgeCooldown > 0) player.dodgeCooldown--;
+      if (player.invuln > 0) player.invuln--;
+
+      let dx = 0;
+      let dy = 0;
+      if (keys["w"]) dy -= 1;
+      if (keys["s"]) dy += 1;
+      if (keys["a"]) dx -= 1;
+      if (keys["d"]) dx += 1;
+
+      if (player.dodgeTimer > 0) {
+        player.dodgeTimer--;
+        player.x += player.vx;
+        player.y += player.vy;
+      } else {
+        const mag = Math.hypot(dx, dy) || 1;
+        player.x += (dx / mag) * player.speed;
+        player.y += (dy / mag) * player.speed;
+        player.vx = 0;
+        player.vy = 0;
+      }
+
+      run.sceneOffset += dx * player.speed * 1.8;
+
+      player.facing = mouseX >= player.x ? 1 : -1;
+      player.x = clamp(player.x, 58, W - 58);
+      player.y = clamp(player.y, 70, H - 64);
+
+      if (Math.abs(dx) + Math.abs(dy) > 0) {
+        player.sprite = (Math.floor(frame / 10) % 2) ? 1 : 2;
+      } else {
+        player.sprite = 0;
+      }
+    }
+
+    function fireShot(targetX, targetY) {
+      if (player.shootCooldown > 0 || state !== "playing" || paused || shopOpen) return;
+      const dx = targetX - player.x;
+      const dy = targetY - player.y;
+      const mag = Math.hypot(dx, dy) || 1;
+      bullets.push({
+        x: player.x + (dx / mag) * 24,
+        y: player.y + (dy / mag) * 24,
+        vx: (dx / mag) * 9,
+        vy: (dy / mag) * 9,
+        damage: player.attack,
+        ttl: 70,
+      });
+      player.shootCooldown = 10;
+      createBurst(player.x, player.y, "#5ce5ff", 3);
+    }
+
+    function meleeAttack() {
+      if (player.meleeCooldown > 0 || state !== "playing" || paused || shopOpen) return;
+      player.meleeCooldown = 18;
+      player.sprite = 2;
+      const range = 96;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        if (distance(player.x, player.y, enemy.x, enemy.y) > range) continue;
+        enemy.hp -= player.attack + 10;
+        createBurst(enemy.x, enemy.y, "#ffd568", 8);
+        if (enemy.hp <= 0) defeatEnemy(i);
+      }
+    }
+
+    function dodge() {
+      if (player.dodgeCooldown > 0 || player.dodgeTimer > 0 || state !== "playing") return;
+      let dx = 0;
+      let dy = 0;
+      if (keys["w"]) dy -= 1;
+      if (keys["s"]) dy += 1;
+      if (keys["a"]) dx -= 1;
+      if (keys["d"]) dx += 1;
+      if (dx === 0 && dy === 0) dx = player.facing;
+      const mag = Math.hypot(dx, dy) || 1;
+      player.vx = (dx / mag) * 12;
+      player.vy = (dy / mag) * 12;
+      player.dodgeTimer = 10;
+      player.dodgeCooldown = 48;
+      player.invuln = 16;
+    }
+
+    function defeatEnemy(index) {
+      const enemy = enemies[index];
+      player.coins += enemy.isBoss ? 16 : 4;
+      run.enemiesDefeated++;
+      run.levelKills++;
+      createBurst(enemy.x, enemy.y, enemy.isBoss ? "#ff7c9e" : "#9cdcff", enemy.isBoss ? 20 : 10);
+      drops.push({
+        x: enemy.x,
+        y: enemy.y,
+        value: enemy.isBoss ? 8 : 2,
+        ttl: 280,
+      });
+      enemies.splice(index, 1);
+      clearLevelIfReady();
+    }
+
+    function updateBullets() {
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const shot = bullets[i];
+        shot.x += shot.vx;
+        shot.y += shot.vy;
+        shot.ttl--;
+        if (shot.ttl <= 0 || shot.x < -20 || shot.x > W + 20 || shot.y < -20 || shot.y > H + 20) {
+          bullets.splice(i, 1);
+          continue;
+        }
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          const enemy = enemies[j];
+          if (distance(shot.x, shot.y, enemy.x, enemy.y) > enemy.radius) continue;
+          enemy.hp -= shot.damage;
+          createBurst(shot.x, shot.y, "#6be8ff", 5);
+          bullets.splice(i, 1);
+          if (enemy.hp <= 0) defeatEnemy(j);
+          break;
+        }
+      }
+    }
+
+    function updateEnemies() {
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        const dx = player.x - enemy.x;
+        const dy = player.y - enemy.y;
+        const mag = Math.hypot(dx, dy) || 1;
+        enemy.x += (dx / mag) * enemy.speed;
+        enemy.y += (dy / mag) * enemy.speed;
+        enemy.frame = enemy.isBoss ? 3 : ((Math.floor(frame / 12) % 2) ? 1 : 2);
+        if (enemy.attackCooldown > 0) enemy.attackCooldown--;
+        if (distance(enemy.x, enemy.y, player.x, player.y) < enemy.radius + 22 && enemy.attackCooldown <= 0 && player.invuln <= 0) {
+          player.hp -= enemy.damage;
+          player.invuln = 20;
+          enemy.attackCooldown = 24;
+          createBurst(player.x, player.y, "#ff6983", 9);
+          if (player.hp <= 0) {
+            player.hp = 0;
+            state = "gameover";
+          }
+        }
+      }
+    }
+
+    function updateDrops() {
+      for (let i = drops.length - 1; i >= 0; i--) {
+        const drop = drops[i];
+        drop.ttl--;
+        const pull = distance(drop.x, drop.y, player.x, player.y);
+        if (pull < 120) {
+          const dx = player.x - drop.x;
+          const dy = player.y - drop.y;
+          const mag = Math.hypot(dx, dy) || 1;
+          drop.x += (dx / mag) * 3.2;
+          drop.y += (dy / mag) * 3.2;
+        }
+        if (pull < 28) {
+          player.coins += drop.value;
+          createBurst(drop.x, drop.y, "#ffe07a", 6);
+          drops.splice(i, 1);
+          continue;
+        }
+        if (drop.ttl <= 0) drops.splice(i, 1);
+      }
+    }
+
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const particle = particles[i];
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.vx *= 0.95;
+        particle.vy *= 0.95;
+        particle.ttl--;
+        if (particle.ttl <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function buyItem(key) {
+      if (!shop[key]) return;
+      const item = shop[key];
+      if (player.coins < item.cost) return;
+      player.coins -= item.cost;
+      item.apply();
+      item.cost += 6;
+      setOverlay(item.label + " unlocked", 90);
+    }
+
+    function update() {
+      frame++;
+      if (overlayTimer > 0) overlayTimer--;
+
+      if (state === "loading" || paused || shopOpen || state === "victory") {
+        updateParticles();
+        return;
+      }
+      if (state === "intro") {
+        updateParticles();
+        if (overlayTimer <= 0) state = "playing";
+        return;
+      }
+      if (state === "between" || state === "gameover") {
+        updateParticles();
+        updateDrops();
+        return;
+      }
+
+      updatePlayer();
+      const level = currentLevel();
+      const activeNonBoss = enemies.filter((enemy) => !enemy.isBoss).length;
+      const targetNonBoss = Math.min(7, 3 + Math.floor(run.levelIndex / 2));
+      if (run.levelKills < level.goal) {
+        run.spawnTimer--;
+        if (run.spawnTimer <= 0 && activeNonBoss < targetNonBoss) {
+          spawnEnemy(false);
+          run.spawnTimer = Math.max(24, 56 - run.levelIndex * 2);
+        }
+      }
+      updateBullets();
+      updateEnemies();
+      updateDrops();
+      updateParticles();
+    }
+
+    function drawBuildings(yBase, palette, scroll = 0, spacing = 84) {
+      for (let i = 0; i < 12; i++) {
+        const width = 48 + (i % 3) * 18;
+        const height = 110 + (i % 4) * 28;
+        const wrap = spacing * 12;
+        const x = ((i * spacing - 10) + (scroll % wrap) + wrap) % wrap - spacing;
+        ctx.fillStyle = palette[i % palette.length];
+        ctx.fillRect(x, yBase - height, width, height);
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        for (let row = 0; row < 5; row++) {
+          for (let col = 0; col < 3; col++) {
+            ctx.fillRect(x + 10 + col * 12, yBase - height + 14 + row * 18, 5, 9);
+          }
+        }
+      }
+    }
+
+    function drawBackground() {
+      const level = currentLevel();
+      const nearScroll = -run.sceneOffset;
+      const farScroll = -run.sceneOffset * 0.45;
+      const midScroll = -run.sceneOffset * 0.72;
+      const gradient = ctx.createLinearGradient(0, 0, 0, H);
+      gradient.addColorStop(0, level.theme[0]);
+      gradient.addColorStop(1, level.theme[1]);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, W, H);
+
+      if (level.background === "rooftops") {
+        drawBuildings(H - 88, ["#16273f", "#1f3554", "#28456b"], farScroll, 84);
+        ctx.fillStyle = "rgba(255,255,255,0.07)";
+        for (let i = 0; i < 22; i++) ctx.fillRect((i * 43 + frame * 0.7 + farScroll * 0.2 + W * 2) % W, 48 + (i % 6) * 22, 2, 2);
+        ctx.fillStyle = "#202f45";
+        ctx.fillRect(0, H - 92, W, 92);
+      } else if (level.background === "arcade") {
+        for (let i = 0; i < 7; i++) {
+          const x = ((40 + i * 132 + farScroll) % (W + 180)) + (farScroll < 0 ? 180 : -180);
+          ctx.fillStyle = i % 2 ? "#351b5a" : "#4d246f";
+          ctx.fillRect(x, 120, 92, 240);
+          ctx.fillStyle = "#ff7ce0";
+          ctx.fillRect(x + 12, 136, 68, 18);
+          ctx.fillStyle = "#1a2742";
+          ctx.fillRect(x + 18, 164, 56, 86);
+        }
+        ctx.fillStyle = "#111d31";
+        ctx.fillRect(0, H - 110, W, 110);
+        for (let i = 0; i < 18; i++) {
+          ctx.strokeStyle = i % 2 ? "#ff6bd6" : "#5ee4ff";
+          ctx.strokeRect(((i * 54 + nearScroll) % (W + 54)) - 54, H - 110 + (i % 2) * 12, 40, 40);
+        }
+      } else if (level.background === "garden") {
+        ctx.fillStyle = "#1c4a31";
+        ctx.fillRect(0, H - 130, W, 130);
+        for (let i = 0; i < 20; i++) {
+          ctx.fillStyle = i % 2 ? "#3ea45d" : "#71ff8a";
+          ctx.beginPath();
+          ctx.arc(((i * 52 + 24 + nearScroll) % (W + 80)) - 40, H - 120 + (i % 3) * 12, 30 + (i % 2) * 10, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#284235";
+        for (let i = 0; i < 10; i++) ctx.fillRect(((i * 110 + 10 + midScroll) % (W + 120)) - 60, H - 250, 18, 120);
+        ctx.strokeStyle = "#94ffb0";
+        for (let i = 0; i < 12; i++) {
+          const x = ((i * 80 + 10 + nearScroll) % (W + 100)) - 50;
+          ctx.beginPath();
+          ctx.moveTo(x, H - 140);
+          ctx.lineTo(x + 40, H - 220);
+          ctx.stroke();
+        }
+      } else if (level.background === "canal") {
+        ctx.fillStyle = "#173c4d";
+        ctx.fillRect(0, H - 180, W, 180);
+        ctx.fillStyle = "#4bb8db";
+        ctx.fillRect(110 + farScroll * 0.15, H - 160, W - 220, 120);
+        ctx.fillStyle = "#305a6f";
+        ctx.fillRect(0, H - 170, 110, 140);
+        ctx.fillRect(W - 110, H - 170, 110, 140);
+        for (let i = 0; i < 12; i++) {
+          ctx.fillStyle = "rgba(255,255,255,0.16)";
+          ctx.fillRect(((150 + i * 56 + nearScroll * 0.6) % (W + 120)) - 60, H - 128 + Math.sin((frame + i * 8) * 0.04) * 8, 34, 4);
+        }
+        ctx.strokeStyle = "#87dfff";
+        ctx.strokeRect(110, H - 160, W - 220, 120);
+      } else if (level.background === "metro") {
+        ctx.fillStyle = "#2b1710";
+        ctx.fillRect(0, H - 180, W, 180);
+        for (let i = 0; i < 9; i++) {
+          const x = ((i * 108 + 8 + farScroll) % (W + 140)) - 70;
+          ctx.fillStyle = i % 2 ? "#472116" : "#5d2b1a";
+          ctx.fillRect(x, 120, 76, 220);
+          ctx.fillStyle = "#ff9a52";
+          ctx.fillRect(x + 12, 136, 52, 14);
+        }
+        ctx.fillStyle = "#ff6f3c";
+        for (let i = 0; i < 14; i++) ctx.fillRect(((i * 74 + nearScroll) % (W + 80)) - 40, H - 62 + Math.sin((frame + i * 12) * 0.09) * 8, 54, 8);
+        ctx.strokeStyle = "#ffb06e";
+        ctx.strokeRect(0, H - 150, W, 58);
+      } else if (level.background === "storm") {
+        ctx.fillStyle = "#15213c";
+        ctx.fillRect(0, H - 120, W, 120);
+        ctx.fillStyle = "rgba(255,255,255,0.05)";
+        for (let i = 0; i < 8; i++) {
+          ctx.beginPath();
+          ctx.arc(((120 + i * 110 + farScroll) % (W + 140)) - 70, 120 + (i % 2) * 40, 60, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.strokeStyle = "#d9e6ff";
+        ctx.lineWidth = 4;
+        for (let i = 0; i < 4; i++) {
+          const bx = ((160 + i * 190 + midScroll) % (W + 220)) - 110 + Math.sin((frame + i * 20) * 0.08) * 20;
+          ctx.beginPath();
+          ctx.moveTo(bx, 70);
+          ctx.lineTo(bx - 20, 130);
+          ctx.lineTo(bx + 10, 130);
+          ctx.lineTo(bx - 12, 200);
+          ctx.stroke();
+        }
+        ctx.lineWidth = 1;
+      } else if (level.background === "harbor") {
+        ctx.fillStyle = "#10212b";
+        ctx.fillRect(0, H - 140, W, 140);
+        ctx.fillStyle = "#1f4555";
+        ctx.fillRect(0, H - 88, W, 88);
+        for (let i = 0; i < 7; i++) {
+          const x = ((i * 142 + 20 + farScroll) % (W + 180)) - 90;
+          ctx.fillStyle = "#2d3f4d";
+          ctx.fillRect(x, H - 240, 100, 110);
+          ctx.fillStyle = "#55768c";
+          ctx.fillRect(x + 46, H - 300, 8, 170);
+          ctx.beginPath();
+          ctx.moveTo(x + 54, H - 292);
+          ctx.lineTo(x + 100, H - 250);
+          ctx.lineTo(x + 54, H - 210);
+          ctx.closePath();
+          ctx.fill();
+        }
+      } else if (level.background === "comet") {
+        ctx.fillStyle = "#180f2c";
+        ctx.fillRect(0, H - 120, W, 120);
+        for (let i = 0; i < 28; i++) {
+          ctx.fillStyle = i % 3 ? "rgba(255,255,255,0.85)" : "#d68cff";
+          ctx.fillRect((i * 37 + 20 + farScroll * 0.25 + W * 2) % W, 34 + (i * 19) % 180, 3, 3);
+        }
+        for (let i = 0; i < 4; i++) {
+          const x = (frame * 3 + i * 220 + nearScroll) % (W + 240) - 120;
+          const y = 80 + i * 70;
+          ctx.strokeStyle = "#ffb2de";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x - 80, y - 30);
+          ctx.stroke();
+          ctx.fillStyle = "#fff1a8";
+          ctx.beginPath();
+          ctx.arc(x, y, 9, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.lineWidth = 1;
+      } else if (level.background === "foundry") {
+        ctx.fillStyle = "#21150c";
+        ctx.fillRect(0, H - 150, W, 150);
+        for (let i = 0; i < 8; i++) {
+          const x = ((i * 122 + 12 + farScroll) % (W + 150)) - 75;
+          ctx.fillStyle = "#4a2f1a";
+          ctx.fillRect(x, 110, 86, 240);
+          ctx.fillStyle = "#c98935";
+          ctx.fillRect(x + 26, 132, 34, 140);
+        }
+        ctx.fillStyle = "#ffcb6d";
+        for (let i = 0; i < 14; i++) ctx.fillRect(((i * 74 + 10 + nearScroll) % (W + 80)) - 40, H - 78, 26, 48);
+        ctx.strokeStyle = "#ffdc93";
+        ctx.strokeRect(0, H - 130, W, 80);
+      } else if (level.background === "finalcore") {
+        ctx.fillStyle = "#210919";
+        ctx.fillRect(0, H - 150, W, 150);
+        ctx.strokeStyle = "#ff5f8a";
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 7; i++) {
+          ctx.beginPath();
+          ctx.arc(W / 2 + farScroll * 0.2, H / 2, 80 + i * 38 + Math.sin((frame + i * 9) * 0.04) * 8, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.lineWidth = 1;
+        ctx.fillStyle = "#ff7c9e";
+        ctx.beginPath();
+        ctx.arc(W / 2 + farScroll * 0.2, H / 2, 42, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        for (let i = 0; i < 18; i++) {
+          ctx.fillRect(((i * 58 + nearScroll) % (W + 60)) - 30, H - 92 + (i % 2) * 12, 38, 38);
+        }
+      }
+    }
+
+    function drawArenaEffects() {
+      for (const drop of drops) {
+        ctx.fillStyle = "#ffd45b";
+        ctx.beginPath();
+        ctx.arc(drop.x, drop.y, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff3b0";
+        ctx.beginPath();
+        ctx.arc(drop.x, drop.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const shot of bullets) {
+        ctx.fillStyle = "#62edff";
+        ctx.beginPath();
+        ctx.arc(shot.x, shot.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (player.meleeCooldown > 10) {
+        ctx.fillStyle = "rgba(255, 213, 104, 0.35)";
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, 82, -0.7, 0.7);
+        ctx.fill();
+      }
+
+      for (const particle of particles) {
+        ctx.globalAlpha = particle.ttl / 24;
+        ctx.fillStyle = particle.color;
+        ctx.fillRect(particle.x, particle.y, 6, 6);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function drawCharacters() {
+      for (const enemy of enemies) {
+        drawSprite(assets.enemySheet, enemy.frame, enemy.x, enemy.y + 2, enemy.isBoss ? 130 : 90, enemy.isBoss ? 130 : 90, player.x < enemy.x);
+        if (enemy.isBoss) {
+          ctx.fillStyle = "rgba(0,0,0,0.55)";
+          ctx.fillRect(enemy.x - 56, enemy.y - 86, 112, 10);
+          ctx.fillStyle = "#ff6f93";
+          ctx.fillRect(enemy.x - 54, enemy.y - 84, 108 * (enemy.hp / enemy.maxHp), 6);
+        }
+      }
+
+      const alpha = player.invuln > 0 && frame % 6 < 3 ? 0.55 : 1;
+      drawSprite(assets.playerSheet, player.sprite, player.x, player.y, 110, 110, player.facing < 0, alpha);
+    }
+
+    function drawHud() {
+      const level = currentLevel();
+      ctx.fillStyle = "rgba(0,0,0,0.62)";
+      ctx.fillRect(18, 18, 360, 122);
+      ctx.fillStyle = "rgba(0,0,0,0.62)";
+      ctx.fillRect(W - 314, 18, 284, 110);
+
+      drawOutlinedText("Super Bear", 34, 30, { font: "bold 26px Trebuchet MS", color: "#ffffff" });
+      drawOutlinedText("Level " + (run.levelIndex + 1) + " • " + level.name, 34, 60, { font: "18px Trebuchet MS", color: level.accent });
+
+      ctx.fillStyle = "#34131a";
+      ctx.fillRect(34, 90, 172, 14);
+      ctx.fillStyle = "#ff6586";
+      ctx.fillRect(34, 90, 172 * (player.hp / player.maxHp), 14);
+      drawOutlinedText("HP " + player.hp + " / " + player.maxHp, 218, 84, { font: "16px Trebuchet MS", color: "#fff4f7" });
+
+      drawOutlinedText("Coins: " + player.coins, W - 46, 28, { font: "18px Trebuchet MS", align: "right", color: "#ffd76d" });
+      const shownKills = Math.min(run.levelKills, level.goal);
+      const progressLabel =
+        run.levelKills >= level.goal
+          ? (level.boss ? "Goal hit - defeat the boss" : "Goal complete - press Enter soon")
+          : "Defeated: " + shownKills + " / " + level.goal;
+      drawOutlinedText(progressLabel, W - 46, 54, { font: "18px Trebuchet MS", align: "right", color: "#d7f7ff" });
+      drawOutlinedText("Power " + player.attack + " • Speed " + player.speed.toFixed(1), W - 46, 80, { font: "15px Trebuchet MS", align: "right", color: "#b5d8ff" });
+      drawOutlinedText("Rule: " + level.rule, 34, 116, { font: "15px Trebuchet MS", color: "#f2f7ff" });
+
+      if (overlayTimer > 0) {
+        drawOutlinedText(overlayText, W / 2, 42, { font: "bold 28px Trebuchet MS", align: "center", color: "#ffe176" });
+      }
+    }
+
+    function drawShop() {
+      ctx.fillStyle = "rgba(4, 8, 16, 0.88)";
+      ctx.fillRect(190, 110, 580, 280);
+      ctx.strokeStyle = "#39e4ff";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(190, 110, 580, 280);
+      drawOutlinedText("Bear Lab Shop", 480, 138, { font: "bold 34px Trebuchet MS", align: "center", color: "#7df0ff" });
+      drawOutlinedText("Press 1, 2, 3 to buy • Press B to close", 480, 174, { font: "18px Trebuchet MS", align: "center", color: "#d7eff8" });
+      drawOutlinedText("1. " + shop.boost.label + " - " + shop.boost.cost + " coins", 236, 230, { font: "24px Trebuchet MS", color: "#ffd76d" });
+      drawOutlinedText("2. " + shop.boots.label + " - " + shop.boots.cost + " coins", 236, 276, { font: "24px Trebuchet MS", color: "#88ffe7" });
+      drawOutlinedText("3. " + shop.heart.label + " - " + shop.heart.cost + " coins", 236, 322, { font: "24px Trebuchet MS", color: "#ffb9d0" });
+    }
+
+    function drawStatePanels() {
+      if (state === "intro") {
+        ctx.fillStyle = "rgba(0,0,0,0.38)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Get ready for " + currentLevel().name, W / 2, H / 2 - 20, { font: "bold 34px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText(currentLevel().rule, W / 2, H / 2 + 26, { font: "22px Trebuchet MS", align: "center", color: currentLevel().accent });
+      }
+      if (state === "between") {
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "rgba(4, 10, 18, 0.82)";
+        ctx.fillRect(W / 2 - 310, H / 2 - 150, 620, 300);
+        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+        ctx.strokeRect(W / 2 - 310, H / 2 - 150, 620, 300);
+        drawOutlinedText("Level Clear", W / 2, H / 2 - 110, { font: "bold 42px Trebuchet MS", align: "center", color: "#ffe37b" });
+        drawOutlinedText("Required defeats reached.", W / 2, H / 2 - 56, { font: "22px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("Reward: +" + run.levelRewardCoins + " coins  •  +" + run.levelRewardHeal + " HP", W / 2, H / 2 - 16, { font: "22px Trebuchet MS", align: "center", color: "#8effc8" });
+        drawOutlinedText("Next: Level " + (run.levelIndex + 2) + " - " + levels[run.levelIndex + 1].name, W / 2, H / 2 + 28, { font: "24px Trebuchet MS", align: "center", color: "#d8f5ff" });
+        drawOutlinedText(levels[run.levelIndex + 1].rule, W / 2, H / 2 + 70, { font: "18px Trebuchet MS", align: "center", color: levels[run.levelIndex + 1].accent });
+        drawOutlinedText("Press Enter to continue", W / 2, H / 2 + 118, { font: "bold 26px Trebuchet MS", align: "center", color: "#ffffff" });
+      }
+      if (paused) {
+        ctx.fillStyle = "rgba(0,0,0,0.48)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Paused", W / 2, H / 2, { font: "bold 42px Trebuchet MS", align: "center", color: "#ffffff" });
+      }
+      if (state === "gameover") {
+        ctx.fillStyle = "rgba(0,0,0,0.65)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Super Bear Fell", W / 2, H / 2 - 54, { font: "bold 42px Trebuchet MS", align: "center", color: "#ff839b" });
+        drawOutlinedText("Press R to restart the ten-level run", W / 2, H / 2 + 4, { font: "24px Trebuchet MS", align: "center", color: "#f6fbff" });
+      }
+      if (state === "victory") {
+        ctx.fillStyle = "rgba(0,0,0,0.72)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Super Bear Wins", W / 2, H / 2 - 64, { font: "bold 48px Trebuchet MS", align: "center", color: "#ffe37b" });
+        drawOutlinedText("All 10 levels cleared • Total defeated: " + run.enemiesDefeated, W / 2, H / 2 + 4, { font: "24px Trebuchet MS", align: "center", color: "#dff8ff" });
+        drawOutlinedText("Press R to play again", W / 2, H / 2 + 42, { font: "24px Trebuchet MS", align: "center", color: "#ffffff" });
+      }
+    }
+
+    function draw() {
+      drawBackground();
+      drawArenaEffects();
+      drawCharacters();
+      drawHud();
+      if (shopOpen) drawShop();
+      drawStatePanels();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      keys[key] = true;
+      if (event.code === "Space") {
+        event.preventDefault();
+        dodge();
+      }
+      if (key === "p" && state === "playing") paused = !paused;
+      if (key === "b" && state === "playing") shopOpen = !shopOpen;
+      if (shopOpen) {
+        if (key === "1") buyItem("boost");
+        if (key === "2") buyItem("boots");
+        if (key === "3") buyItem("heart");
+      }
+      if (event.key === "Enter" && state === "between") nextLevel();
+      if (key === "r" && (state === "gameover" || state === "victory")) resetRun();
+      if (state === "intro" && event.key === "Enter") state = "playing";
+    });
+
+    window.addEventListener("keyup", (event) => {
+      keys[event.key.toLowerCase()] = false;
+    });
+
+    canvas.addEventListener("mousemove", (event) => {
+      const point = canvasPoint(event);
+      mouseX = point.x;
+      mouseY = point.y;
+    });
+
+    canvas.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+    });
+
+    canvas.addEventListener("mousedown", (event) => {
+      const point = canvasPoint(event);
+      mouseX = point.x;
+      mouseY = point.y;
+      if (event.button === 0) fireShot(point.x, point.y);
+      if (event.button === 2) meleeAttack();
+    });
+
+    loadAssets()
+      .then(() => {
+        assets.playerSheet = stripLightBackground(assets.playerSheet);
+        assets.enemySheet = stripLightBackground(assets.enemySheet);
+        resetRun();
+        loop();
+      })
+      .catch(() => {
+        state = "loading";
+        ctx.fillStyle = "#07131f";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Asset load failed", W / 2, H / 2, { font: "bold 34px Trebuchet MS", align: "center", color: "#ff8aa5" });
+      });
+  </script>
+</body>
+</html>

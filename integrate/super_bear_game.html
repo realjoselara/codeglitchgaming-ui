@@ -1,0 +1,2459 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Super Bear - Tiny Pixel Game</title>
+  <style>
+    /* Minimal reset */
+    html,body{height:100%;margin:0}
+  body{display:flex;align-items:center;justify-content:center;background:#0b0f13;color:#ddd;font-family:monospace, system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+
+    /* Canvas container to keep centered */
+    .game-wrap{box-shadow:0 6px 30px rgba(0,0,0,0.7);}
+
+    canvas{
+      /* internal resolution is 320x180; scale with integer factor for crisp pixels */
+      width:960px; /* 3x scale */
+      height:540px;
+      image-rendering: pixelated; /* hint for crisp scaling */
+      display:block;
+      background: #081018; /* clean dark background */
+      border: 6px solid #061018;
+    }
+
+    /* HUD text top-left */
+    .hud{
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      color: #f7f7f7;
+      font-weight:700;
+      text-shadow:0 1px 0 rgba(0,0,0,0.6);
+      pointer-events:none;
+    }
+
+    /* small help text */
+    .help{position:absolute;right:12px;top:12px;color:#9fb3c6;font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="game-wrap" style="position:relative">
+    <canvas id="game" width="320" height="180"></canvas>
+  <div class="hud" id="hud" style="display:none">Health: 100   Coins: 0</div>
+  <div class="help">WASD to move • F to shoot • J melee • B open shop</div>
+  </div>
+
+  <script>
+  /* Simple single-file pixel game with melee combo (J)
+     - Canvas rendering (320x180) scaled in CSS for crisp pixels
+     - No external libs
+  */
+
+  // === Basic setup ===
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const W = canvas.width;
+  const H = canvas.height;
+  // canvas ready
+  const GROUND_H = 26;
+  // prevent context menu on right click inside canvas
+  canvas.addEventListener('contextmenu', (e)=>{ e.preventDefault(); });
+  // track mouse position in canvas coordinates
+  canvas.addEventListener('mousemove', (evt)=>{
+    const rect = canvas.getBoundingClientRect();
+    mouseX = (evt.clientX - rect.left) * (canvas.width / rect.width);
+    mouseY = (evt.clientY - rect.top) * (canvas.height / rect.height);
+    // update player facing towards mouse
+    const px = player.x + player.w/2;
+    if(mouseX - px > 0) player.facing = 1; else player.facing = -1;
+  });
+  // mouse click handling: left = punch, right = shoot
+  canvas.addEventListener('mousedown', (evt)=>{
+    // if shop open, let existing shop click handler manage it
+    if(shopOpen || paused || gameOver) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = (evt.clientX - rect.left) * (canvas.width / rect.width);
+    const my = (evt.clientY - rect.top) * (canvas.height / rect.height);
+    // NOTE: left-click now shoots, right-click punches
+    if(evt.button === 0){ // left click -> shoot
+      if(shootCooldown <= 0){
+        shootAt(mx, my);
+        shootCooldown = 14; // ~233ms
+      }
+    } else if(evt.button === 2){ // right click -> punch
+      if(punchCooldown <= 0){
+        doMousePunch(mx, my);
+        punchCooldown = 20; // ~333ms
+      }
+    }
+  });
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+  // === Player (Super Bear) ===
+  const player = {
+    x: W/2 - 10,
+    y: H/2 - 12,
+    w: 14,
+    h: 24,
+    baseSpeed: 1.7,
+    speedBonus: 0,
+    get speed(){ return this.baseSpeed + (this.speedBonus || 0); },
+    vx:0, vy:0,
+    health: 100,
+    maxHealth: 100,
+    attackBonus: 0,
+    facing: 1,
+    invuln: 0,
+    // dodge state
+    isDodging: false,
+    dodgeTimer: 0,
+    dodgeCooldown: 0,
+    dodgeVx: 0,
+    dodgeVy: 0,
+    // last movement direction for dodge fallback
+    lastMoveX: 1,
+    lastMoveY: 0
+  };
+
+  // === Controls ===
+  const keys = {};
+  window.addEventListener('keydown', (e)=>{
+    keys[e.key.toLowerCase()] = true;
+    // prevent page from scrolling when hitting Space
+    if(e.code === 'Space') e.preventDefault();
+  });
+  window.addEventListener('keyup', (e)=>{ keys[e.key.toLowerCase()] = false; });
+
+  // toggle shop with B
+  window.addEventListener('keydown', (e)=>{
+    if(e.key.toLowerCase() === 'b'){
+      shopOpen = !shopOpen;
+      // when opening shop, clear input buffer for safety
+      if(shopOpen){ for(const k in keys) keys[k]=false; }
+    }
+  });
+
+  // === Projectiles ===
+  const projectiles = [];
+  function shoot(){
+    // legacy keyboard shoot: shoot in facing direction with modest speed
+    const cx = player.x + player.w/2, cy = player.y + player.h/2;
+    const angle = player.facing>0 ? 0 : Math.PI;
+    const speed = 5.5;
+    const p = { x: cx, y: cy, w:3, h:3, dx: Math.cos(angle)*speed, dy: Math.sin(angle)*speed, ttl: 120, dmg: 1926 };
+    projectiles.push(p);
+    try{ playSound('shoot'); }catch(e){}
+  }
+  // shoot toward a target position (used by mouse/right-click)
+  function shootAt(mx, my){
+    const cx = player.x + player.w/2, cy = player.y + player.h/2;
+    const dirx = mx - cx, diry = my - cy; const m = Math.hypot(dirx, diry) || 1;
+    const speed = 6.2;
+    const p = { x: cx, y: cy, w:3, h:3, dx: (dirx/m)*speed, dy: (diry/m)*speed, ttl: 160, dmg: 1926 };
+    projectiles.push(p);
+    try{ playSound('shoot'); }catch(e){}
+  }
+  // mouse punch action: immediate short-range hit toward facing direction (right-click)
+  function doMousePunch(mx, my){
+    const range = 28;
+    const hx = player.facing>0 ? player.x + player.w : player.x - range;
+    const hy = player.y + 6;
+    const hb = { x: hx, y: hy, w: range, h: player.h - 10 };
+    // visual
+    punchFlashTimer = 8;
+    try{ playSound('attack'); }catch(e){}
+    // apply damage to enemies in hitbox
+    for(let i=enemies.length-1;i>=0;i--){ const e = enemies[i]; if(rectsOverlap(hb, e)){
+        const dmg = 1926;
+        e.hp -= dmg; e.flash = 12; e.x += (player.facing>0? 10 : -10);
+        try{ playSound('hit'); }catch(ex){}
+        if(e.hp<=0){ enemyKilledAt(e.x + e.w/2, e.y + e.h/2); enemies.splice(i,1); }
+      } }
+  }
+  // mouse controls state
+  let mouseX = W/2, mouseY = H/2;
+  let punchCooldown = 0; // frames
+  let shootCooldown = 0; // frames
+  let punchFlashTimer = 0; // visual effect
+  let fireCooldown = 0;
+
+  // === Enemies ===
+  const enemies = [];
+  function spawnEnemy(){
+    const side = Math.floor(Math.random()*4);
+    let x,y; const size = 14; // enemy spawns just outside screen
+    if(side===0){ x = -size; y = Math.random()*(H-size); }
+    else if(side===1){ x = W + size; y = Math.random()*(H-size); }
+    else if(side===2){ x = Math.random()*(W-size); y = -size; }
+    else { x = Math.random()*(W-size); y = H+size; }
+  // Small pixel dog: size 12x12 (fits requirement). We scale stats smoothly with totalKills
+  // enemy base speed: reduced so player is noticeably faster
+  const baseSpeed = 0.25 + Math.random()*0.35; // baseline so early enemies are slower (0.25-0.6)
+    const baseHp = 14 + Math.floor(Math.random()*10); // baseline HP around ~14-24
+    const baseDmg = 6 + Math.floor(Math.random()*6);
+
+    const df = computeDifficulty();
+    // scale multipliers (smooth). Tune these to keep growth fair.
+    const speedMultiplier = 1 + df.scale * 0.9; // base scale from totalKills
+    const hpMultiplier = 1 + df.scale * 1.6;
+    const dmgAdder = Math.round(df.scale * 10);
+
+    // apply per-level multipliers from LEVELS data
+    const lvlData = LEVELS[level] || LEVELS[1];
+    const lvlSpeedMul = lvlData.enemySpeedMultiplier || 1;
+    const lvlHpMul = lvlData.enemyHealthMultiplier || 1;
+    const lvlDmgMul = lvlData.enemyDamageMultiplier || 1;
+
+  // apply global slowdown factor so enemies remain clearly slower than player
+  let finalSpeed = baseSpeed * speedMultiplier * lvlSpeedMul * 0.62; // tuned slowdown multiplier
+  finalSpeed = clamp(finalSpeed, 0.18, 1.25);
+
+  let finalHp = Math.max(6, Math.round(baseHp * hpMultiplier * lvlHpMul));
+    finalHp = Math.min(finalHp, 240); // cap HP higher for later levels
+
+  // apply damage multipliers
+  let finalDmg = Math.max(3, Math.round((baseDmg + dmgAdder) * lvlDmgMul));
+  finalDmg = Math.min(finalDmg, 96);
+
+    const e = {
+      x, y,
+      w:12, h:12,
+      speed: finalSpeed,
+      vx: 0, vy: 0, // for smooth movement lerp
+      reaction: 6 + Math.floor(Math.random()*10), // small reaction delay before they start moving
+      preAttackDelay: 0,
+      hp: finalHp,
+      hitCooldown:0,
+      flash:0,
+      attackState: 'idle', // idle | telegraph
+      telegraph:0,
+      // telegraph flags
+      isTelegraphing: false,
+      telegraphTimer: 0,
+      attackCooldown: 0,
+      attackRange: 16,
+      attackDmg: finalDmg,
+      id: Math.random(),
+    };
+    enemies.push(e);
+  }
+  let spawnTimer = 0; let spawnInterval = 180; let maxEnemies = 6; let frame = 0;
+
+  // Kill tracking and level progression
+  let totalKills = 0;        // total kills across the whole run (difficulty scaling)
+  let levelKills = 0;        // kills in the current level (for level goals)
+
+  // Structured level data for progression (levels 1..10)
+  const LEVELS = [
+    null,
+    { level:1, name: 'City Streets', killGoal:10, difficulty:'Easy', rewardCoins:10, rewardHeal:12, enemySpeedMultiplier:1.0, enemyHealthMultiplier:1.0, enemyDamageMultiplier:1.0, spawnInterval:200, bossEnabled:true },
+    { level:2, name: 'Mall', killGoal:15, difficulty:'Easy', rewardCoins:12, rewardHeal:12, enemySpeedMultiplier:1.08, enemyHealthMultiplier:1.05, enemyDamageMultiplier:1.04, spawnInterval:180, bossEnabled:true },
+    { level:3, name: 'Farm', killGoal:20, difficulty:'Easy-Medium', rewardCoins:15, rewardHeal:14, enemySpeedMultiplier:1.12, enemyHealthMultiplier:1.12, enemyDamageMultiplier:1.06, spawnInterval:170, bossEnabled:true },
+    { level:4, name: 'Factory Zone', killGoal:25, difficulty:'Medium', rewardCoins:18, rewardHeal:18, enemySpeedMultiplier:1.18, enemyHealthMultiplier:1.18, enemyDamageMultiplier:1.12, spawnInterval:150, bossEnabled:true },
+    { level:5, name: 'Rooftops', killGoal:30, difficulty:'Medium', rewardCoins:20, rewardHeal:18, enemySpeedMultiplier:1.24, enemyHealthMultiplier:1.25, enemyDamageMultiplier:1.18, spawnInterval:140, bossEnabled:true },
+    { level:6, name: 'Night Highway', killGoal:35, difficulty:'Medium-Hard', rewardCoins:22, rewardHeal:20, enemySpeedMultiplier:1.28, enemyHealthMultiplier:1.32, enemyDamageMultiplier:1.22, spawnInterval:130, bossEnabled:true },
+    { level:7, name: 'Harbor Docks', killGoal:40, difficulty:'Hard', rewardCoins:25, rewardHeal:20, enemySpeedMultiplier:1.34, enemyHealthMultiplier:1.45, enemyDamageMultiplier:1.3, spawnInterval:120, bossEnabled:true },
+    { level:8, name: 'Power Plant', killGoal:45, difficulty:'Hard', rewardCoins:30, rewardHeal:26, enemySpeedMultiplier:1.42, enemyHealthMultiplier:1.55, enemyDamageMultiplier:1.38, spawnInterval:110, bossEnabled:true },
+    { level:9, name: 'Dark Fortress', killGoal:50, difficulty:'Hard', rewardCoins:35, rewardHeal:30, enemySpeedMultiplier:1.5, enemyHealthMultiplier:1.7, enemyDamageMultiplier:1.5, spawnInterval:100, bossEnabled:true },
+    { level:10, name: 'Final Showdown', killGoal:60, difficulty:'Very Hard', rewardCoins:0, rewardHeal:0, enemySpeedMultiplier:1.6, enemyHealthMultiplier:2.0, enemyDamageMultiplier:1.8, spawnInterval:90, bossEnabled:true }
+  ];
+
+  // current level index and UI messages
+  let level = 1;
+  let levelMessageTimer = 0; // show transition text
+  let levelMsgText = '';
+  // boss flags for per-level flow
+  let bossSpawnedForLevel = false;
+  let bossDefeatedForLevel = false;
+  // boss state
+  let boss = null; // null or boss object
+  let bossIntroTimer = 0; // pause and show 'BOSS FIGHT'
+  let bossMessageTimer = 0;
+  // boss helper systems
+  let bossZones = []; // lingering damaging areas left by boss attacks
+  let bossPhaseMsgTimer = 0;
+  let bossPhaseMsgText = '';
+
+  // Difficulty helpers — smooth scaling based on totalKills
+  function computeDifficulty(){
+    // scale in [0,1] for smooth increases; use totalKills to determine progression
+    const scale = clamp(totalKills / 80, 0, 1);
+    let label = 'Easy';
+    if(totalKills > 50) label = 'Hard';
+    else if(totalKills > 20) label = 'Medium';
+    return { label, scale };
+  }
+
+  // === Audio / SFX (lightweight WebAudio) ===
+  let audioCtx = null;
+  const lastPlay = { hit:0, coin:0, attack:0, shoot:0, playerHit:0 };
+  function ensureAudio(){ if(!audioCtx){ try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ audioCtx = null; } } }
+  function playSound(type){
+    const now = performance.now();
+    const mins = { hit:40, coin:80, attack:60, shoot:60, playerHit:160 };
+    const min = mins[type] || 40;
+    if(lastPlay[type] && (now - lastPlay[type]) < min) return;
+    lastPlay[type] = now;
+    ensureAudio();
+    if(!audioCtx) return;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    const t0 = audioCtx.currentTime;
+    if(type === 'coin'){
+      o.type = 'sine'; o.frequency.setValueAtTime(980, t0);
+      o.frequency.exponentialRampToValueAtTime(520, t0 + 0.12);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.18, t0 + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+      o.start(t0); o.stop(t0 + 0.20);
+    } else if(type === 'hit' || type === 'playerHit'){
+      o.type = 'square'; o.frequency.setValueAtTime(type==='playerHit'? 220 : 560, t0);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.25, t0 + 0.001);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+      o.start(t0); o.stop(t0 + 0.14);
+    } else if(type === 'attack' || type === 'shoot'){
+      o.type = 'triangle'; o.frequency.setValueAtTime(type==='attack'? 320 : 720, t0);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.18, t0 + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+      o.start(t0); o.stop(t0 + 0.14);
+    } else {
+      o.type = 'sine'; o.frequency.setValueAtTime(600, t0);
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.14, t0 + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+      o.start(t0); o.stop(t0 + 0.12);
+    }
+  }
+
+  // Pause / Game Over states
+  let paused = false;
+  let gameOver = false;
+  // Game state: 'start' | 'playing' | 'paused' | 'gameover'
+  let gameState = 'start';
+
+  // start-screen animation timers
+  let startFrame = 0;
+  let titleSparkle = 0;
+  let bearWavePhase = 0;
+  let speechBounce = 0;
+  let startBlink = 0;
+
+  // === Shop system ===
+  let shopOpen = false;
+  // Skin system: track unlocked/equipped skins (persist optional)
+  const SKIN_CAPTAIN = 'captain_panda';
+  const SKIN_DEFAULT = 'default';
+  let unlockedSkins = {};
+  let equippedSkin = SKIN_DEFAULT;
+
+  function loadSkins(){
+    try{
+      const raw = localStorage.getItem('superbear_skins_v1');
+      if(raw){ const data = JSON.parse(raw); unlockedSkins = data.unlocked || {}; equippedSkin = data.equipped || SKIN_DEFAULT; }
+      else { unlockedSkins = {}; unlockedSkins[SKIN_DEFAULT] = true; equippedSkin = SKIN_DEFAULT; }
+    }catch(e){ unlockedSkins = {}; unlockedSkins[SKIN_DEFAULT] = true; equippedSkin = SKIN_DEFAULT; }
+  }
+  function saveSkins(){
+    try{ localStorage.setItem('superbear_skins_v1', JSON.stringify({ unlocked: unlockedSkins, equipped: equippedSkin })); }catch(e){}
+  }
+  // initialize
+  loadSkins();
+  // NOTE: `equippedSkin` is the single source-of-truth for appearance.
+  // We intentionally do not maintain a separate `currentSkin` that can
+  // be changed outside the shop. Removing the automatic/currentSkin
+  // syncing prevents accidental skin changes. Use the shop (B) to
+  // permanently equip a skin.
+  // S key cooldown (frames) to prevent spam
+  let sCooldown = 0;
+  // skin switch message display
+  let skinMsgTimer = 0; let skinMsgText = '';
+  // brief flash animation when switching skins
+  let skinSwitchFlash = 0;
+  // shop items: cost, level, and effect applied on purchase
+  const shopItems = {
+    attack: { name: 'Attack', cost: 5, level: 0, maxLevel: 10, apply(){ player.attackBonus += 2; } },
+    speed: { name: 'Speed', cost: 8, level: 0, maxLevel: 6, apply(){ player.speedBonus += 0.28; } },
+    health: { name: 'Health', cost: 10, level: 0, maxLevel: 6, apply(){ player.maxHealth += 12; player.health = Math.min(player.maxHealth, player.health + 12); } }
+  };
+
+  // Skin shop entry (cost and id)
+  const shopSkins = [ { id: SKIN_CAPTAIN, name: 'Captain Panda', cost: 25 } ];
+
+  // === Coins ===
+  const coins = [];
+  let coinCount = 0;
+  // magnet pickup settings
+  const COIN_MAGNET_RADIUS = 48; // pixels
+  const COIN_MAGNET_FORCE = 0.26; // acceleration per frame toward player
+  const COIN_AUTO_PICK_DISTANCE = 10; // when coin is this close, auto-collect
+  // simple particles for coin pickup burst
+  const coinParticles = [];
+
+  // dodge afterimages
+  const dodgeTrail = [];
+
+  // Dodge tuning constants (frames at ~60fps)
+  const DODGE_DURATION = 14; // how long dodge moves (frames)
+  const DODGE_SPEED = 6.4; // pixels per frame during dodge burst
+  const DODGE_COOLDOWN = 48; // cooldown frames before next dodge
+
+  function spawnCoinParticle(x, y){
+    const p = {
+      x: x,
+      y: y,
+      vx: (Math.random()-0.5) * 1.8,
+      vy: - (Math.random()*1.6 + 0.6),
+      life: 18 + Math.floor(Math.random()*8),
+      ttl: 18 + Math.floor(Math.random()*8),
+      size: 1 + Math.floor(Math.random()*2),
+      color: Math.random() < 0.6 ? '#fff9d6' : '#ffd24a'
+    };
+    coinParticles.push(p);
+  }
+
+  // === Level celebration / transition system ===
+  let inCelebration = false;
+  let celebrationTimer = 0;
+  const CELEBRATION_DURATION = 180; // frames (~3s)
+  const confetti = [];
+  let victoryMsg = '';
+  let rewardMsg = '';
+  let rewardTimer = 0;
+  let screenFlash = 0;
+
+  function randColor(){ const cols = ['#ffd24a','#ff6b6b','#6bf0ff','#9bff7a','#ff9bd6','#ffd9a6']; return cols[Math.floor(Math.random()*cols.length)]; }
+
+  function spawnConfettiBurst(count){
+    // count: number of confetti particles to spawn (scaled by level)
+    count = count || 140;
+    // scale per-particle velocity/size slightly when count is large for more dramatic effect
+    const sizeBoost = Math.min(2, Math.floor(count / 160));
+    for(let i=0;i<count;i++){
+      confetti.push({ x: Math.random()*W, y: Math.random()*H*0.3, vx: (Math.random()-0.5)*(3.6 + sizeBoost*0.8), vy: Math.random()*(1.6 + sizeBoost*0.6) + 0.6, color: randColor(), ttl: 60 + Math.floor(Math.random()*60) + sizeBoost*20, size: 1 + Math.floor(Math.random()*2) + sizeBoost });
+    }
+  }
+
+  function updateCelebration(){
+    // update confetti particles
+    for(let i=confetti.length-1;i>=0;i--){ const p = confetti[i]; p.vy += 0.06; p.x += p.vx; p.y += p.vy; p.ttl--; if(p.ttl<=0 || p.y > H + 8) confetti.splice(i,1); }
+    // update coin particles so they continue to animate
+    for(let i=coinParticles.length-1;i>=0;i--){ const p = coinParticles[i]; p.vy += 0.18; p.x += p.vx; p.y += p.vy; p.life--; if(p.life<=0) coinParticles.splice(i,1); }
+    if(rewardTimer>0) rewardTimer--; if(screenFlash>0) screenFlash--; if(skinMsgTimer>0) skinMsgTimer--; if(sCooldown>0) sCooldown--; if(skinSwitchFlash>0) skinSwitchFlash--;
+  }
+
+  function startLevelCelebration(newLevel){
+    // scale celebration strength with level number
+    inCelebration = true;
+    const lvl = Math.max(1, Math.floor(newLevel || level));
+    // multiplier increases noticeably per level (tweak factor to taste)
+    const mult = 1 + (lvl - 1) * 0.6; // level1=1.0, level2=1.6, level3=2.2, ...
+
+    // duration scales with level (but keep reasonable cap)
+    celebrationTimer = Math.min(720, Math.round(CELEBRATION_DURATION * mult));
+
+    // confetti amount scales
+    confetti.length = 0; spawnConfettiBurst(Math.round(140 * mult));
+
+    // Spawn a coins burst that will auto-collect to the player visually (scale count)
+    const coinBurst = Math.round(12 * mult);
+    for(let i=0;i<coinBurst;i++){
+      spawnCoin(player.x + player.w/2 + (Math.random()-0.5)*64, player.y + player.h/2 + (Math.random()-0.5)*64);
+      const c = coins[coins.length-1]; if(c){ c.collected = true; c.collectTimer = 2 + Math.floor(Math.random()*8); }
+    }
+
+    // reward the player (scaled but not insane)
+    const bonus = Math.round(10 * mult);
+    coinCount += bonus;
+
+    // scaled heal (cap to reasonable amount)
+    const maxHeal = Math.round(20 * mult);
+    const heal = Math.min(maxHeal, player.maxHealth - player.health);
+    if(heal > 0) player.health += heal;
+
+    // temporary shield (invuln) scales with level
+    player.invuln = Math.max(player.invuln || 0, Math.round(180 * mult));
+
+    // celebratory shake stronger at higher levels
+    shake = Math.max(shake, Math.round(10 * mult));
+
+    // messages and flash (scaled timers/intensity)
+    rewardMsg = '+' + bonus + ' COINS'; rewardTimer = Math.round(160 * mult);
+    victoryMsg = 'LEVEL COMPLETE!';
+    screenFlash = Math.min(120, Math.round(18 * mult));
+    try{ playSound('coin'); }catch(e){}
+  }
+
+  function spawnCoin(cx, cy){
+    const size = 5; // 4-6 pixels
+    // clamp x so coin is on screen
+    const x = clamp(Math.round(cx - size/2), 4, W - size - 4);
+    const baseY = H - GROUND_H - size - 1;
+    // spawn slightly above death point, give a pop (negative vy) and spawnBounces for small landing bounce
+    const coin = {
+      x: x,
+      y: Math.round(cy) - 10, // start a bit higher
+      baseY: baseY,
+      w: size, h: size,
+      vx: (Math.random()-0.5)*0.8,
+      vy: -3.0 + Math.random()*-0.6, // stronger pop
+      gravity: 0.28,
+      landed: false,
+      spawnTimer: 0,
+      spawnBounces: 1 + (Math.random() < 0.25 ? 1 : 0), // 1 or sometimes 2 small bounces
+      bouncePower: 5 + Math.random()*2,
+      animFrame: Math.floor(Math.random()*30),
+      collected: false,
+      collectTimer: 0,
+      scale: 1,
+      spinPhase: Math.random() < 0.5 ? 0 : 1 // fake spin state (0 or 1)
+    };
+    coins.push(coin);
+  }
+
+  // === Background / Buildings (pixel-style) ===
+  const buildings = [];
+  function initBuildings(){
+    // All positions are pixel-aligned integers
+    // Left building (small)
+    buildings.push(createBuilding(20, H - 60, 40, 48, '#454a55', 3, 4));
+    // Center building (tallest, main focus)
+    buildings.push(createBuilding(120, H - 110, 80, 104, '#394452', 5, 8));
+    // Right building (medium)
+    buildings.push(createBuilding(240, H - 80, 52, 76, '#3e3f4b', 3, 5));
+  }
+
+  function createBuilding(x, topY, w, h, color, cols, rows){
+    // topY is y-position of top of building
+    // build window grid with random on/off
+    const win = [];
+    for(let r=0;r<rows;r++){
+      const row = [];
+      for(let c=0;c<cols;c++) row.push(Math.random() < 0.5);
+      win.push(row);
+    }
+    return { x: Math.round(x), y: Math.round(topY), w: Math.round(w), h: Math.round(h), color, cols, rows, windows: win, flick: 0 };
+  }
+
+  function updateBuildingFlicker(){
+    // occasional random toggle of some windows to add life
+    for(const b of buildings){
+      if(Math.random() < 0.02){
+        const r = Math.floor(Math.random()*b.rows);
+        const c = Math.floor(Math.random()*b.cols);
+        b.windows[r][c] = Math.random() < 0.6; // toggle with bias
+      }
+    }
+  }
+
+  function drawBackground(){
+    // draw level-specific background (pixel blocks only)
+    const groundH = 26;
+    if(level === 1){
+      // City (original) - sky already cleared in draw(); draw road and buildings
+      ctx.fillStyle = '#141618'; // dark asphalt
+      ctx.fillRect(0, H - groundH, W, groundH);
+      // sidewalk line
+      ctx.fillStyle = '#1e2226'; ctx.fillRect(0, H - groundH - 4, W, 2);
+      const cam = (player.x + player.w/2) - W/2;
+      for(let i=0;i<buildings.length;i++){
+        const b = buildings[i];
+        const parallax = 0.45 + i*0.15;
+        const bx = Math.round(b.x - cam * parallax);
+        const by = Math.round(b.y);
+        ctx.fillStyle = b.color; ctx.fillRect(bx, by, b.w, b.h);
+        const padX = 4; const padY = 6; const availW = b.w - padX*2; const availH = b.h - padY*2;
+        const cellW = Math.floor(availW / b.cols); const cellH = Math.floor(availH / b.rows);
+        for(let r=0;r<b.rows;r++){
+          for(let c=0;c<b.cols;c++){
+            const wx = bx + padX + c*cellW + 1;
+            const wy = by + padY + r*cellH + 1;
+            const on = b.windows[r][c];
+            ctx.fillStyle = on ? '#ffea8a' : '#222428';
+            const ww = Math.max(1, Math.min(3, cellW-2));
+            const wh = Math.max(1, Math.min(2, cellH-2));
+            ctx.fillRect(Math.round(wx), Math.round(wy), ww, wh);
+          }
+        }
+      }
+      // road stripes
+      const stripeY = H - Math.floor(groundH/2) - 2; const stripeW = 4; const gap = 10;
+      const offset = Math.round(((player.x + player.w/2) - W/2) * 0.25 % (stripeW + gap));
+      ctx.fillStyle = '#e8e8e8';
+      for(let sx = -offset; sx < W; sx += stripeW + gap) ctx.fillRect(sx, stripeY, stripeW, 1);
+    }
+    else if(level === 2){
+      // Mall interior: tiled floor, storefronts, signs, doors
+      // tiled floor
+      const tileW = 8, tileH = 6;
+      ctx.fillStyle = '#2b2f33'; // indoor floor base
+      ctx.fillRect(0, H - groundH, W, groundH);
+      for(let tx = 0; tx < W; tx += tileW){
+        for(let ty = H - groundH; ty < H; ty += tileH){
+          ctx.fillStyle = ((tx/ tileW + ty/ tileH) % 2 === 0) ? '#2f3438' : '#25292c';
+          ctx.fillRect(tx, ty, tileW-1, tileH-1);
+        }
+      }
+      // storefronts on back wall
+      const shopY = H - groundH - 72; const shopH = 64;
+      for(let i = 0; i < 4; i++){
+        const sx = 12 + i * 76; const sw = 64;
+        ctx.fillStyle = '#24303a'; ctx.fillRect(sx, shopY, sw, shopH);
+        // windowpane
+        ctx.fillStyle = '#cfe7f2'; ctx.fillRect(sx+6, shopY+8, sw-12, shopH-28);
+        // sign above
+        ctx.fillStyle = '#1e6fb3'; ctx.fillRect(sx+8, shopY-10, sw-16, 8);
+        // door
+        ctx.fillStyle = '#0b0f12'; ctx.fillRect(sx + Math.floor(sw/2) - 6, shopY + shopH - 18, 12, 14);
+      }
+      // mall background wall
+      ctx.fillStyle = '#162026'; ctx.fillRect(0, shopY + shopH, W, H - (shopY + shopH) - groundH + shopH - 6);
+    }
+    else if(level === 3){
+      // Farm: dirt ground, grass patches, fence and barn
+      // dirt ground
+      ctx.fillStyle = '#4b2e1f'; ctx.fillRect(0, H - groundH, W, groundH);
+      // grass patches above
+      for(let gx = 0; gx < W; gx += 24){
+        const gw = 18; const gh = 8; const gy = H - groundH - 6 - (Math.random()*6|0);
+        ctx.fillStyle = '#2f7a2f'; ctx.fillRect(gx+2, gy, gw, gh);
+        // small crop tiles
+        for(let c = 0; c < 3; c++){ ctx.fillStyle = '#1f5f1f'; ctx.fillRect(gx+4 + c*5, gy+2, 2, 2); }
+      }
+      // fence rows
+      ctx.fillStyle = '#8b5a2b';
+      for(let fx = 0; fx < W; fx += 12){ ctx.fillRect(fx, H - groundH - 18, 2, 18); }
+      // rails
+      ctx.fillRect(0, H - groundH - 12, W, 2); ctx.fillRect(0, H - groundH - 6, W, 2);
+      // barn on left
+      const bx = 28, by = H - groundH - 72, bw = 64, bh = 64;
+      ctx.fillStyle = '#8b1111'; ctx.fillRect(bx, by, bw, bh);
+      // barn roof
+      ctx.fillStyle = '#5a0d0d'; ctx.fillRect(bx-6, by-6, bw+12, 6);
+      // barn door
+      ctx.fillStyle = '#2b0b0b'; ctx.fillRect(bx + Math.floor(bw/2) - 8, by + bh - 28, 16, 24);
+    }
+    else if(level === 4){
+      // Factory Zone: metallic floor, conveyor stripes, crates and pipes
+      ctx.fillStyle = '#0f1216'; ctx.fillRect(0, H - groundH, W, groundH);
+      // factory floor tiles
+      for(let x=0;x<W;x+=8){ ctx.fillStyle = (x/8 % 2 === 0) ? '#171a20' : '#111316'; ctx.fillRect(x, H - groundH, 8, groundH); }
+      // conveyor belts / stripes
+      ctx.fillStyle = '#2b2f33'; for(let sx = 12; sx < W; sx += 48){ ctx.fillRect(sx, H - groundH + 4, 24, 6); ctx.fillStyle = '#3e4550'; ctx.fillRect(sx+6, H - groundH + 6, 12, 2); ctx.fillStyle = '#2b2f33'; }
+      // pipes and crates in background
+      for(let i=0;i<5;i++){ const px = 24 + i*56; ctx.fillStyle = '#28323a'; ctx.fillRect(px, H - groundH - 44, 18, 36); ctx.fillStyle = '#101216'; ctx.fillRect(px+4, H - groundH - 40, 10, 6); }
+      // small scattered crates
+      for(let c=0;c<6;c++){ const cx = 6 + c*46 + (c%2?8:0); const cy = H - groundH - (8 + (c%3)*6); ctx.fillStyle = '#5a3b2a'; ctx.fillRect(cx, cy, 12, 10); ctx.fillStyle = '#44301f'; ctx.fillRect(cx+1, cy+1, 10, 2); }
+    }
+    else if(level === 5){
+      // Rooftops: skyline silhouette, vents, skylights
+      ctx.fillStyle = '#0b0f16'; ctx.fillRect(0, H - groundH, W, groundH);
+      // skyline silhouettes
+      ctx.fillStyle = '#071018'; ctx.fillRect(0, 0, W, H - 36);
+      for(let i=0;i<6;i++){ const bw = 20 + (i%3)*16; const bx = i*48 + (i%2?6:0); const bhgt = 40 + (i%4)*10; ctx.fillStyle = '#0f1720'; ctx.fillRect(bx, H - groundH - bhgt, bw, bhgt); }
+      // rooftop details: vents and AC boxes
+      for(let r=0;r<7;r++){ const rx = 12 + r*42; ctx.fillStyle = '#2b2b2b'; ctx.fillRect(rx, H - groundH - 14 - (r%3)*6, 10, 8); ctx.fillStyle = '#101214'; ctx.fillRect(rx+2, H - groundH - 12 - (r%3)*6, 6, 4); }
+      // small satellite dishes
+      for(let d=0; d<3; d++){ const dx = 40 + d*96; const dy = H - groundH - 28; ctx.fillStyle = '#cfd7df'; ctx.fillRect(dx, dy, 2, 2); ctx.beginPath(); ctx.strokeStyle = '#cfd7df'; ctx.moveTo(dx+1, dy); ctx.lineTo(dx+6, dy-4); ctx.stroke(); }
+    }
+    else if(level === 6){
+      // Night Highway: dark road, lane stripes, distant headlights
+      ctx.fillStyle = '#06070a'; ctx.fillRect(0, H - groundH, W, groundH);
+      // road surface
+      ctx.fillStyle = '#0b0f12'; ctx.fillRect(0, H - groundH - 12, W, groundH + 12);
+      // lane stripes moving by player.x influence
+      const stripeY = H - Math.floor(groundH/2) - 2; const stripeW = 6; const gap = 12;
+      const offset = Math.round(((player.x + player.w/2) - W/2) * 0.5 % (stripeW + gap));
+      ctx.fillStyle = '#9fb3c6';
+      for(let sx = -offset; sx < W; sx += stripeW + gap) ctx.fillRect(sx, stripeY, stripeW, 1);
+      // distant car headlights as small dots
+      for(let h=0; h<6; h++){ const hx = (h*64 + (frame%90)); const hy = H - groundH - 28 - (h%2)*8; ctx.fillStyle = '#ffdca0'; ctx.fillRect((hx%W), hy, 2, 1); }
+    }
+    else if(level === 7){
+      // Harbor Docks: water, wooden planks, crates
+      // water band
+      ctx.fillStyle = '#071a2a'; ctx.fillRect(0, H - groundH - 18, W, 40);
+      // dock planks
+      for(let px=0; px<W; px+=18){ ctx.fillStyle = (px/18%2===0)?'#3e2e20':'#35271a'; ctx.fillRect(px, H - groundH - 6, 18, 6); }
+      // pilings
+      for(let p=0;p<8;p++){ const px = 18 + p*36; ctx.fillStyle = '#24180f'; ctx.fillRect(px, H - groundH - 40, 6, 40); }
+      // stacked crates
+      for(let c=0;c<5;c++){ const cx = 20 + c*56; const cy = H - groundH - 28 - (c%2)*10; ctx.fillStyle = '#6b4124'; ctx.fillRect(cx, cy, 18, 14); ctx.fillStyle = '#51321b'; ctx.fillRect(cx+2, cy+2, 14, 4); }
+    }
+    else if(level === 8){
+      // Power Plant: pipes, glowing reactors, hazard stripes
+      ctx.fillStyle = '#0b0e12'; ctx.fillRect(0, H - groundH, W, groundH);
+      // large reactor shapes
+      for(let i=0;i<3;i++){ const rx = 36 + i*88; ctx.fillStyle = '#2b2f36'; ctx.fillRect(rx, H - groundH - 62, 46, 62); ctx.fillStyle = '#ffd24a'; ctx.fillRect(rx+6, H - groundH - 20, 34, 8); }
+      // pipes
+      for(let p=0;p<6;p++){ const px = 8 + p*48; ctx.fillStyle = '#27313a'; ctx.fillRect(px, H - groundH - 30, 34, 6); ctx.fillStyle = '#1b2328'; ctx.fillRect(px+2, H - groundH - 28, 30, 2); }
+      // hazard stripe band
+      ctx.fillStyle = '#222'; ctx.fillRect(0, H - groundH - 6, W, 6);
+      for(let s=0;s<W;s+=12){ ctx.fillStyle = (s/12%2===0)?'#ffd24a':'#222'; ctx.fillRect(s, H - groundH - 6, 8, 6); }
+    }
+    else if(level === 9){
+      // Dark Fortress: stone blocks, torches, spikes
+      ctx.fillStyle = '#07080a'; ctx.fillRect(0, H - groundH, W, groundH);
+      // stone wall background
+      for(let sx=0;sx<W;sx+=24){ const sh = 48 + ((sx/24)%3)*6; ctx.fillStyle = '#16171a'; ctx.fillRect(sx, H - groundH - sh, 24, sh); ctx.fillStyle = '#0f1012'; ctx.fillRect(sx+2, H - groundH - sh + 6, 20, 2); }
+      // torches (small orange pixels)
+      for(let t=0; t<5; t++){ const tx = 28 + t*60; const ty = H - groundH - 38; ctx.fillStyle = '#ff8a3b'; ctx.fillRect(tx, ty, 2, 3); ctx.fillStyle = '#ffef9b'; ctx.fillRect(tx+1, ty-2, 1, 1); }
+      // floor spikes subtle
+      for(let sp=0; sp<W; sp+=30){ ctx.fillStyle = '#2b2b2b'; ctx.beginPath(); ctx.moveTo(sp+8, H - groundH); ctx.lineTo(sp+12, H - groundH - 8); ctx.lineTo(sp+16, H - groundH); ctx.fill(); }
+    }
+    else if(level === 10){
+      // Final Showdown: dramatic arena, pillars and spotlight
+      ctx.fillStyle = '#05060a'; ctx.fillRect(0, H - groundH, W, groundH);
+      // arena floor circle (centered)
+      ctx.fillStyle = '#0b0f14'; ctx.fillRect(0, H - groundH - 80, W, 80);
+      ctx.save(); ctx.globalAlpha = 0.08; ctx.fillStyle = '#fffff0'; ctx.beginPath(); ctx.ellipse(W/2, H - groundH - 24, 72, 20, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+      // pillars
+      for(let p=0;p<4;p++){ const px = 40 + p*72; ctx.fillStyle = '#1b1f25'; ctx.fillRect(px, H - groundH - 60, 8, 60); ctx.fillStyle = '#0f1113'; ctx.fillRect(px-2, H - groundH - 4, 12, 4); }
+      // spotlights beams
+      ctx.fillStyle = 'rgba(255,255,220,0.06)'; ctx.beginPath(); ctx.moveTo(W/2-10, 0); ctx.lineTo(W/2-140, H - groundH); ctx.lineTo(W/2+140, H - groundH); ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // === Melee combo system ===
+  // Define melee steps (frame durations assume ~60fps)
+  const melee = [
+    null,
+    { name:'Punch I', dmg:8, duration:14, range:16, knock:3, color:'#ffd28a', hitStart:2, hitEnd:6 },
+    { name:'Punch II', dmg:12, duration:16, range:22, knock:4, color:'#ffd06a', hitStart:3, hitEnd:7 },
+    { name:'Heavy', dmg:22, duration:26, range:28, knock:12, color:'#ff8a8a', hitStart:6, hitEnd:12 }
+  ];
+
+  let comboStep = 0; // 0=no combo, 1..3 steps
+  let attackTimer = 0; // frames left for current attack
+  let comboTimer = 0; // frames left to input next within window
+  const comboWindow = 36; // frames allowed between hits (~600ms)
+  let queuedNext = false; // whether next input was queued during current swing
+  let currentHitRecords = null; // set to track enemies hit this swing
+
+  // hit-stop and screen shake
+  let hitStop = 0; let shake = 0; let shakeX = 0, shakeY = 0;
+
+  // UI combo indicator flash timer
+  let comboIndicatorTimer = 0;
+
+  // Handle melee input (J key)
+  window.addEventListener('keydown', (e)=>{
+    if(e.key.toLowerCase()==='j'){
+      // If not in combo, start first if not locked
+      if(comboStep===0 && attackTimer<=0){ startAttack(1); }
+      else if(comboStep>0 && comboTimer>0 && comboStep<3){
+        // if currently mid-swing, queue next; otherwise start it immediately
+        if(attackTimer>0) queuedNext = true; else startAttack(comboStep+1);
+      }
+    }
+  });
+
+  function startAttack(step){
+    comboStep = step;
+    attackTimer = melee[step].duration;
+    // set comboTimer to allow next input after this swing (slightly larger than window)
+    comboTimer = comboWindow;
+    queuedNext = false;
+    currentHitRecords = new Set();
+    comboIndicatorTimer = comboWindow;
+    try{ playSound('attack'); }catch(e){}
+  }
+
+  // === Collisions ===
+  function rectsOverlap(a,b){ return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+
+  // === Game update ===
+  function update(){
+    // If we're on the start screen, only progress start-screen timers/animation and skip game logic
+    if(gameState === 'start'){
+      startFrame++;
+      titleSparkle += 0.08;
+      bearWavePhase += 0.09;
+      speechBounce = Math.sin(bearWavePhase) * 2;
+      startBlink = (Math.floor(startFrame / 30) % 2) === 0;
+  // decrement S key cooldown and UI timers even on title screen so they stay responsive
+  if(sCooldown > 0) sCooldown--;
+  if(skinMsgTimer > 0) skinMsgTimer--;
+  if(skinSwitchFlash > 0) skinSwitchFlash--;
+  // decrement mouse attack cooldowns and punch flash
+  if(punchCooldown > 0) punchCooldown--;
+  if(shootCooldown > 0) shootCooldown--;
+  if(punchFlashTimer > 0) punchFlashTimer--;
+      return;
+    }
+    // update frame counter
+    frame++;
+    // occasional building window flicker
+    if(frame % 12 === 0) updateBuildingFlicker();
+    // if hitStop active, only decrement timers and return
+    if(hitStop>0){ hitStop--; if(hitStop>0){ // still paused
+      // decrement some timers but skip movement
+      if(fireCooldown>0) fireCooldown--;
+      if(comboTimer>0) comboTimer--; else if(comboStep>0 && attackTimer<=0) resetCombo();
+      if(attackTimer>0) attackTimer--;
+      // decrement enemy flash
+      for(const e of enemies) if(e.flash>0) e.flash--;
+      if(player.invuln>0) player.invuln--;
+      return;
+    }}
+
+    // if shop is open, pause most game updates but keep UI timers
+    if(shopOpen){
+      if(fireCooldown>0) fireCooldown--;
+      if(comboTimer>0) comboTimer--; else if(comboStep>0 && attackTimer<=0) resetCombo();
+      if(attackTimer>0) attackTimer--;
+      if(bossMessageTimer>0) bossMessageTimer--;
+      if(bossPhaseMsgTimer>0) bossPhaseMsgTimer--;
+      // do not progress enemies or projectiles while in shop
+      return;
+    }
+
+    // celebration / transition state: pause regular gameplay but update celebration effects
+    if(inCelebration){
+      if(celebrationTimer>0) celebrationTimer--;
+      updateCelebration();
+      // keep the level message visible while celebrating
+      if(levelMessageTimer>0) levelMessageTimer--;
+      if(celebrationTimer <= 0){ inCelebration = false; }
+      // don't progress normal game logic while celebrating
+      return;
+    }
+
+    // pause handling: stop normal updates but keep minimal UI timers
+    if(paused){
+      if(fireCooldown>0) fireCooldown--;
+      if(comboTimer>0) comboTimer--; else if(comboStep>0 && attackTimer<=0) resetCombo();
+      if(attackTimer>0) attackTimer--;
+      if(bossMessageTimer>0) bossMessageTimer--;
+      if(bossPhaseMsgTimer>0) bossPhaseMsgTimer--;
+      return;
+    }
+
+  // if game over or we've beaten the game, don't progress game logic
+  if(gameOver || gameState === 'victory') return;
+
+  // decrement skin switch timers / cooldown
+  if(sCooldown > 0) sCooldown--;
+  if(skinMsgTimer > 0) skinMsgTimer--;
+  if(bossPhaseMsgTimer > 0) bossPhaseMsgTimer--;
+  if(skinSwitchFlash > 0) skinSwitchFlash--;
+  // level message timer
+  if(levelMessageTimer > 0) levelMessageTimer--;
+
+    // dodge cooldown decrement
+    if(player.dodgeCooldown > 0) player.dodgeCooldown--;
+
+  // decrement mouse attack cooldowns
+  if(punchCooldown > 0) punchCooldown--;
+  if(shootCooldown > 0) shootCooldown--;
+  if(punchFlashTimer > 0) punchFlashTimer--;
+
+    // dodge movement (short burst overriding normal movement)
+    if(player.isDodging){
+      // move by dodge velocity, produce a faint afterimage trail
+      player.x += player.dodgeVx; player.y += player.dodgeVy;
+      if(frame % 2 === 0){ dodgeTrail.push({ x: player.x, y: player.y, ttl: 10, alpha: 0.9 }); }
+      player.dodgeTimer--;
+      if(player.dodgeTimer <= 0){
+        player.isDodging = false;
+        player.dodgeCooldown = DODGE_COOLDOWN;
+        player.dodgeVx = 0; player.dodgeVy = 0;
+      }
+      // keep player on screen
+      player.x = clamp(player.x, 4, W - player.w - 4);
+      player.y = clamp(player.y, 4, H - player.h - 4);
+    }
+    else {
+      // normal controls
+      player.vx = 0; player.vy = 0;
+      let moved = false;
+  // WASD controls (lowercase keys)
+  if(keys['a']){ player.vx = -player.speed; player.facing = -1; moved = true; player.lastMoveX = -1; player.lastMoveY = 0; }
+  if(keys['d']){ player.vx = player.speed; player.facing = 1; moved = true; player.lastMoveX = 1; player.lastMoveY = 0; }
+  if(keys['w']){ player.vy = -player.speed; moved = true; player.lastMoveX = 0; player.lastMoveY = -1; }
+  if(keys['s']){ player.vy = player.speed; moved = true; player.lastMoveX = 0; player.lastMoveY = 1; }
+
+      player.x += player.vx; player.y += player.vy;
+      player.x = clamp(player.x, 4, W - player.w - 4);
+      player.y = clamp(player.y, 4, H - player.h - 4);
+    }
+
+    // shooting
+    if(fireCooldown>0) fireCooldown--;
+    if(keys['f'] && fireCooldown===0){ shoot(); fireCooldown = 12; }
+
+    // update projectiles
+    for(let i = projectiles.length-1; i>=0; i--){
+      const p = projectiles[i];
+      // support 2D velocity if present
+      p.x += (p.dx || 0); p.y += (p.dy || 0); p.ttl--;
+      // remove when clearly offscreen or ttl expired
+      if(p.x < -16 || p.x > W+16 || p.y < -16 || p.y > H+16 || p.ttl<=0){ projectiles.splice(i,1); continue; }
+      for(let j=enemies.length-1;j>=0;j--){ const e = enemies[j]; if(rectsOverlap(p, e)){
+          // use projectile damage if provided, otherwise fallback
+          const pdmg = (p.dmg !== undefined) ? p.dmg : (10 + (player.attackBonus||0));
+          e.hp -= pdmg;
+          e.x += (p.dx>0? 6 : -6);
+          e.flash = 10;
+          try{ playSound('hit'); }catch(ex){ }
+          projectiles.splice(i,1);
+          if(e.hp<=0){
+            // enemy killed by projectile
+            enemyKilledAt(e.x + e.w/2, e.y + e.h/2);
+            enemies.splice(j,1);
+          }
+          break; } }
+    }
+
+    // update coins
+    for(let i=coins.length-1;i>=0;i--){
+      const c = coins[i];
+      // update particle pool
+      if(c.collected){
+        // move toward player quickly and pop
+        c.collectTimer += 1;
+        const tx = player.x + player.w/2 - c.w/2;
+        const ty = player.y + player.h/2 - c.h/2;
+        // quick lerp
+        c.x += (tx - c.x) * 0.36;
+        c.y += (ty - c.y) * 0.36;
+        c.scale *= 0.82;
+        if(c.collectTimer === 1){
+          // spawn a small sparkle burst
+          for(let s=0;s<6;s++) spawnCoinParticle(c.x + c.w/2, c.y + c.h/2);
+        }
+        if(c.collectTimer > 10){
+          // final collect: increment coin and play sound
+          try{ playSound('coin'); }catch(e){}
+          coins.splice(i,1);
+          coinCount += 1;
+        }
+        continue;
+      }
+
+      // spawn physics (pop up then fall)
+      if(!c.landed){
+        c.vy += c.gravity;
+        c.x += c.vx; c.y += c.vy;
+        // landing detection
+        if(c.y >= c.baseY){
+          c.y = c.baseY;
+          if(c.spawnBounces > 0){
+            // small bounce
+            c.vy = - (c.bouncePower * 0.28);
+            c.spawnBounces -= 1;
+            // reduce bouncePower so subsequent bounces are smaller
+            c.bouncePower *= 0.5;
+          } else {
+            c.landed = true;
+            c.spawnTimer = 0;
+          }
+        }
+      } else {
+        // idle bobbing + subtle spin: alternate narrow/wide frames
+        c.animFrame = (c.animFrame + 1) % 60;
+        // bob amplitude small and tied to animFrame
+        c.y = c.baseY + Math.round(Math.sin(c.animFrame * 0.14) * 0.6);
+        // occasionally toggle spinPhase for fake spin
+        if(c.animFrame % 24 === 0) c.spinPhase = 1 - c.spinPhase;
+      }
+
+      // magnet: gently pull coins toward player when within radius
+      const pcx = c.x + c.w/2;
+      const pcy = c.y + c.h/2;
+      const playerCx = player.x + player.w/2;
+      const playerCy = player.y + player.h/2;
+      const mdx = playerCx - pcx;
+      const mdy = playerCy - pcy;
+      const mdist = Math.hypot(mdx, mdy) || 1;
+      if(mdist < COIN_MAGNET_RADIUS){
+        // if already landed, give a tiny pop so it can move
+        if(c.landed) { c.landed = false; c.vy = -1.0; }
+        // apply gentle acceleration toward player
+        c.vx += (mdx / mdist) * COIN_MAGNET_FORCE;
+        c.vy += (mdy / mdist) * COIN_MAGNET_FORCE;
+        // limit max speed so motion stays snappy but controlled
+        const maxSpeed = 3.0;
+        const spd = Math.hypot(c.vx, c.vy);
+        if(spd > maxSpeed){ c.vx = (c.vx / spd) * maxSpeed; c.vy = (c.vy / spd) * maxSpeed; }
+        // if very close, auto-collect (starts collect animation)
+  if(mdist <= COIN_AUTO_PICK_DISTANCE){ c.collected = true; c.collectTimer = 0; }
+      }
+      else {
+        // player collection check (make pickup forgiving: slightly larger area)
+        const coinRect = { x: c.x - 2, y: c.y - 2, w: c.w + 4, h: c.h + 4 };
+        if(rectsOverlap(coinRect, player)){
+          c.collected = true; c.collectTimer = 0;
+        }
+      }
+    }
+
+    // update coin particles
+    for(let i=coinParticles.length-1;i>=0;i--){
+      const p = coinParticles[i];
+      p.vy += 0.18; p.x += p.vx; p.y += p.vy; p.life--; if(p.life<=0) coinParticles.splice(i,1);
+    }
+
+    // melee attack timers and hit detection
+    if(attackTimer>0){
+      // detect hits during active window for this step
+      const step = comboStep;
+      const m = melee[step];
+      const elapsed = m.duration - attackTimer;
+      if(elapsed >= m.hitStart && elapsed <= m.hitEnd){
+        // perform hit detection once per enemy per swing
+        const hx = player.facing>0 ? player.x + player.w : player.x - m.range;
+        const hy = player.y + 4;
+        const hb = { x: hx, y: hy, w: m.range, h: player.h-6 };
+        for(let i=enemies.length-1;i>=0;i--){
+          const e = enemies[i];
+          if(currentHitRecords.has(e)) continue;
+          if(rectsOverlap(hb, e)){
+            // apply damage
+            e.hp -= (m.dmg + (player.attackBonus||0));
+            try{ playSound('hit'); }catch(ex){}
+            e.flash = 8; // visual flash
+            // knockback
+            const k = player.facing>0 ? m.knock : -m.knock;
+            e.x += k; e.y += -2; // slight vertical pop
+            currentHitRecords.add(e);
+            // small hit-stop
+            hitStop = 4;
+            // heavy attack special effects
+            if(step===3){ shake = 8; }
+              if(e.hp<=0){
+                enemyKilledAt(e.x + e.w/2, e.y + e.h/2);
+                enemies.splice(i,1);
+              }
+          }
+        }
+      }
+      attackTimer--;
+      // if attack finished and a next input was queued, start it
+      if(attackTimer<=0){ if(queuedNext && comboStep<3){ startAttack(comboStep+1); } }
+    }
+
+    // combo timer management
+    if(comboTimer>0) comboTimer--; else if(comboStep>0 && attackTimer<=0) resetCombo();
+
+    // update enemies (dog behavior: follow with wobble, telegraphed attack)
+  frame++;
+    for(let i=enemies.length-1;i>=0;i--){
+      const e = enemies[i];
+      // movement: follow player with slight randomness to avoid stacking
+      // respect a short reaction delay so enemies don't instantly track the player
+      if(e.reaction > 0){ e.reaction--; }
+      else {
+        const dx = (player.x + player.w/2) - (e.x + e.w/2);
+        const dy = (player.y + player.h/2) - (e.y + e.h/2);
+        const dist = Math.hypot(dx,dy) || 1;
+        // add small wobble based on frame and id
+        const wobble = (Math.sin(frame*0.07 + e.id*10) * 0.4 + (Math.random()-0.5)*0.3);
+        // target velocity
+        const targetVx = (dx/dist) * e.speed + wobble*0.2;
+        const targetVy = (dy/dist) * e.speed + wobble*0.1;
+        // lerp current velocity toward target for smooth movement
+        e.vx += (targetVx - e.vx) * 0.16;
+        e.vy += (targetVy - e.vy) * 0.16;
+        e.x += e.vx;
+        e.y += e.vy;
+      }
+
+      // simple separation so enemies don't perfectly overlap
+      for(const o of enemies){
+        if(o===e) continue;
+        const ddx = (o.x + o.w/2) - (e.x + e.w/2);
+        const ddy = (o.y + o.h/2) - (e.y + e.h/2);
+        const d2 = Math.hypot(ddx, ddy) || 1;
+        if(d2 < 10){ // if too close, push a bit
+          const push = (10 - d2) * 0.02;
+          e.x -= (ddx/d2) * push;
+          e.y -= (ddy/d2) * push;
+        }
+      }
+
+      // clamp inside extended bounds
+      if(e.x < -40) e.x = -40; if(e.x > W+40) e.x = W+40;
+      if(e.y < -40) e.y = -40; if(e.y > H+40) e.y = H+40;
+
+      // attack cooldown timers
+      if(e.attackCooldown>0) e.attackCooldown--;
+      if(e.hitCooldown>0) e.hitCooldown--;
+
+      // attack logic: telegraph when near
+      const pDx = (player.x + player.w/2) - (e.x + e.w/2);
+      const pDy = (player.y + player.h/2) - (e.y + e.h/2);
+      const pdist = Math.hypot(pDx, pDy);
+      if(e.attackState === 'idle'){
+        if(pdist <= e.attackRange + 2 && e.attackCooldown<=0){
+          // introduce a slight reaction before telegraph so enemies feel a touch slower to respond
+          if(!e.preAttackDelay || e.preAttackDelay <= 0){
+            // initialize a small randomized pre-attack delay (frames)
+            e.preAttackDelay = 4 + Math.floor(Math.random()*8);
+          } else {
+            e.preAttackDelay--;
+            if(e.preAttackDelay <= 0){
+              // begin telegraph: set telegraph timer and flag so draw code shows red flash
+              e.attackState = 'telegraph';
+              e.isTelegraphing = true;
+              e.telegraph = 14; // telegraph frames (~230ms)
+              e.telegraphTimer = e.telegraph;
+            }
+          }
+        } else {
+          // reset any pre-attack delay if player moved away
+          e.preAttackDelay = 0;
+        }
+      }
+      else if(e.attackState === 'telegraph'){
+        // flash red during telegraph (draw will use telegraph>0)
+        e.telegraphTimer--;
+        e.telegraph = e.telegraphTimer;
+        if(e.telegraphTimer<=0){
+          e.isTelegraphing = false;
+          // perform attack if still in range
+          if(pdist <= e.attackRange + 6){
+            // damage player if not invulnerable and not dodging
+            if(player.invuln<=0 && !player.isDodging){
+              player.health -= e.attackDmg;
+              try{ playSound('playerHit'); }catch(ex){}
+              player.invuln = 30;
+              // knockback
+              const kx = (player.x - e.x) > 0 ? 10 : -10;
+              const ky = (player.y - e.y) > 0 ? 6 : -6;
+              player.x = clamp(player.x + kx, 0, W-player.w);
+              player.y = clamp(player.y + ky, 0, H-player.h);
+              // tiny shake
+              shake = Math.max(shake, 6);
+            }
+          }
+          e.attackCooldown = 48; // delay before next telegraph
+          e.attackState = 'idle';
+        }
+      }
+
+      // remove if dead or far away
+      if(e.hp <= 0){
+        // enemy died from other effects
+        enemyKilledAt(e.x + e.w/2, e.y + e.h/2);
+        enemies.splice(i,1); continue;
+      }
+      if(e.x < -50 || e.x > W+50 || e.y < -50 || e.y > H+50){ enemies.splice(i,1); continue; }
+
+      if(e.flash>0) e.flash--;
+    }
+
+    // boss update (if boss present)
+    if(boss){
+      // boss intro movement
+      if(boss.state === 'enter'){
+        // drop into scene until y near ground
+        boss.y += 1.6;
+        if(boss.y >= H - GROUND_H - boss.h - 6){ boss.y = H - GROUND_H - boss.h - 6; boss.state = 'introPause'; boss.stateTimer = 30; }
+      }
+      else if(boss.state === 'introPause'){
+        boss.stateTimer--; if(boss.stateTimer <= 0){ boss.state = 'active'; boss.attackCooldown = 40; }
+      }
+      else if(boss.state === 'active'){
+        // If this is the farm boss Nitro, use special behavior
+        if(boss.type === 'nitro'){
+          // Phase change at <50
+          if(boss.hp < 50 && boss.phase === 1){ boss.phase = 2; boss.speed *= 1.28; boss.attackCooldown = Math.max(8, boss.attackCooldown - 28); bossPhaseMsgText = 'PHASE 2'; bossPhaseMsgTimer = 140; bossMessageTimer = 90; }
+
+          // timers
+          if(boss.attackCooldown > 0) boss.attackCooldown--;
+          if(boss.summonCooldown > 0) boss.summonCooldown--;
+
+          // simple targeting
+          const dx = (player.x + player.w/2) - (boss.x + boss.w/2);
+          const dy = (player.y + player.h/2) - (boss.y + boss.h/2);
+          const dist = Math.hypot(dx, dy) || 1;
+
+          // Attack selection
+          if(boss.attackCooldown <= 0 && boss.attackState === 'idle'){
+            const r = Math.random();
+            if(dist < 48 && r < 0.75){ boss.attackState = 'closeTele'; boss.telegraph = 12; boss.attackCooldown = 90 - boss.phase * 18; }
+            else if(dist < 220 && r < 0.9){ boss.attackState = 'chargeTele'; boss.telegraph = 18; boss.attackCooldown = 120 - boss.phase * 20; }
+            else { boss.attackState = 'areaTele'; boss.telegraph = 14; boss.attackCooldown = 140 - boss.phase * 22; }
+            boss.flash = 10; // red telegraph cue
+          }
+
+          // handle telegraphs & executions
+          if(boss.attackState === 'closeTele'){
+            boss.telegraph--;
+            if(boss.telegraph <= 0){ boss.attackState = 'closeExec'; boss.stateTimer = 6; }
+          }
+          else if(boss.attackState === 'closeExec'){
+            boss.stateTimer--;
+            // deal damage at the moment of execution
+            if(boss.stateTimer === 3){
+              if(Math.hypot(dx,dy) <= 56 && player.invuln <= 0 && !player.isDodging){ player.health -= boss.closeDamage; player.invuln = 42; shake = Math.max(shake, 10); try{ playSound('playerHit'); }catch(e){} }
+            }
+            if(boss.stateTimer <= 0) boss.attackState = 'idle';
+          }
+          else if(boss.attackState === 'chargeTele'){
+            boss.telegraph--;
+            if(boss.telegraph <= 0){
+              const dirx = (player.x + player.w/2) - (boss.x + boss.w/2);
+              const diry = (player.y + player.h/2) - (boss.y + boss.h/2);
+              const m = Math.hypot(dirx, diry) || 1;
+              const speedCharge = 7 + boss.phase * 2;
+              boss.vx = (dirx/m) * speedCharge; boss.vy = (diry/m) * speedCharge;
+              boss.attackState = 'charge'; boss.stateTimer = 22; boss.flash = 8;
+            }
+          }
+          else if(boss.attackState === 'charge'){
+            boss.x += boss.vx; boss.y += boss.vy;
+            const brect = { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
+            const prect = { x: player.x, y: player.y, w: player.w, h: player.h };
+            if(rectsOverlap(brect, prect) && player.invuln <= 0 && !player.isDodging){ player.health -= boss.chargeDamage; player.invuln = 64; shake = Math.max(shake, 18); try{ playSound('playerHit'); }catch(e){}; boss.attackState = 'idle'; boss.vx = 0; boss.vy = 0; }
+            boss.stateTimer--;
+            if(boss.stateTimer <= 0){ boss.attackState = 'idle'; boss.vx = 0; boss.vy = 0; }
+          }
+          else if(boss.attackState === 'areaTele'){
+            boss.telegraph--;
+            if(boss.telegraph <= 0){ boss.attackState = 'areaExec'; boss.stateTimer = 14; boss.areaR = 18 + boss.phase*6; }
+          }
+          else if(boss.attackState === 'areaExec'){
+            // visual pixel burst and damage check at start
+            if(boss.stateTimer === 14){
+              // small immediate burst damage
+              const dcenter = Math.hypot(dx, dy);
+              if(dcenter <= (18 + boss.phase*6) && player.invuln <= 0 && !player.isDodging){ player.health -= boss.areaDamage + boss.phase*2; player.invuln = 46; shake = Math.max(shake, 12); try{ playSound('playerHit'); }catch(e){} }
+              // create a visual pixel burst using bossZones for brief area
+              bossZones.push({ x: boss.x + boss.w/2, y: boss.y + boss.h/2, r: boss.areaR, ttl: 28, dmg: Math.max(4, boss.areaDamage) });
+            }
+            boss.stateTimer--;
+            if(boss.stateTimer <= 0) boss.attackState = 'idle';
+          }
+
+          // idle nudge toward player if not acting
+          if(boss.attackState === 'idle'){
+            boss.x += (dx/dist) * boss.speed;
+            boss.y += (dy/dist) * boss.speed;
+          }
+
+          // clamp to arena
+          boss.x = clamp(boss.x, 8, W - boss.w - 8);
+          boss.y = clamp(boss.y, 8, H - boss.h - GROUND_H - 2);
+
+          if(boss.flash > 0) boss.flash--;
+
+          // handle boss death (special reward for Nitro)
+          if(boss.hp <= 0){
+            if(boss.type === 'nitro'){
+              // larger reward burst and coin bonus
+              for(let s=0;s<20;s++) spawnCoin(boss.x + boss.w/2 + (Math.random()-0.5)*36, boss.y + boss.h/2 + (Math.random()-0.5)*36);
+              for(let p=0;p<48;p++) spawnCoinParticle(boss.x + boss.w/2 + (Math.random()-0.5)*20, boss.y + boss.h/2 + (Math.random()-0.5)*20);
+              // immediate bonus as well
+              coinCount += 18;
+            } else {
+              for(let s=0;s<10;s++) spawnCoin(boss.x + boss.w/2 + (Math.random()-0.5)*24, boss.y + boss.h/2 + (Math.random()-0.5)*24);
+              for(let p=0;p<28;p++) spawnCoinParticle(boss.x + boss.w/2 + (Math.random()-0.5)*16, boss.y + boss.h/2 + (Math.random()-0.5)*16);
+            }
+            boss.state = 'dead'; bossMessageTimer = 120; bossPhaseMsgText = '';
+            bossDefeatedForLevel = true;
+          }
+        } else {
+          // existing generic boss behavior (unchanged)
+  // --- PHASES ---
+  // Phase 2 at <70, Phase 3 at <35 (explicit thresholds to match request)
+  if(boss.hp < 70 && boss.phase === 1){ boss.phase = 2; boss.speed *= 1.25; boss.chainChance = 0.28; boss.attackCooldown = 18; bossPhaseMsgText = 'PHASE 2'; bossPhaseMsgTimer = 120; bossMessageTimer = 90; }
+  if(boss.hp < 35 && boss.phase === 2){ boss.phase = 3; boss.speed *= 1.25; boss.chainChance = 0.5; boss.attackCooldown = 12; bossPhaseMsgText = 'PHASE 3'; bossPhaseMsgTimer = 140; bossMessageTimer = 100; }
+
+        // movement: smarter chase (predict player movement a bit)
+        const predictFactor = 8; // how far ahead to predict
+        const targetX = (player.x + player.w/2) + (player.vx || 0) * predictFactor;
+        const targetY = (player.y + player.h/2) + (player.vy || 0) * predictFactor;
+        const ddx = targetX - (boss.x + boss.w/2);
+        const ddy = targetY - (boss.y + boss.h/2);
+        const dist2 = Math.hypot(ddx, ddy) || 1;
+
+        // timers
+        if(boss.attackCooldown>0) boss.attackCooldown--;
+        if(boss.summonCooldown>0) boss.summonCooldown--;
+
+        // track player stillness to punish standing still
+        if(Math.abs(player.vx) < 0.01 && Math.abs(player.vy) < 0.01){ boss.playerStillCounter++; } else { boss.playerStillCounter = 0; }
+
+        // aggression boost if player standing still
+        const standingPunish = boss.playerStillCounter > 90; // ~1.5s
+        if(standingPunish && boss.attackCooldown <= 0){ boss.attackCooldown = 20; boss.attackState = 'shockTele'; boss.telegraph = Math.max(8, 18 - (boss.phase*4)); boss.flash = 10; }
+
+        // Attack selection when ready
+        if(boss.attackCooldown <= 0 && boss.attackState === 'idle'){
+          // bias toward close attacks when near, otherwise mix charge/shock
+          const rng = Math.random();
+          const closeDist = 56;
+          // reduce telegraph lengths by phase
+          const teleSlam = Math.max(8, 18 - (boss.phase*3));
+          const teleCharge = Math.max(10, 22 - (boss.phase*4));
+          const teleShock = Math.max(12, 36 - (boss.phase*6));
+
+          if(dist2 < closeDist && rng < 0.6){
+            boss.attackState = 'slamTele'; boss.telegraph = teleSlam; boss.attackCooldown = 70 - (boss.phase*8);
+            boss.flash = 10;
+          } else if(dist2 < 220 && rng < 0.8){
+            boss.attackState = 'chargeTele'; boss.telegraph = teleCharge; boss.attackCooldown = 110 - (boss.phase*12);
+            boss.flash = 8;
+          } else {
+            boss.attackState = 'shockTele'; boss.telegraph = teleShock; boss.attackCooldown = 160 - (boss.phase*18);
+            boss.flash = 6;
+          }
+          // small chance to chain another attack immediately after (phase increases chance)
+          if(Math.random() < boss.chainChance) boss.chainNext = true; else boss.chainNext = false;
+        }
+
+        // --- handle telegraphs and execution ---
+        if(boss.attackState === 'slamTele'){
+          boss.telegraph--;
+          if(boss.telegraph <= 0){ boss.stateTimer = 6; boss.attackState = 'slam'; boss.flash = 12; /* heavy slam telegraph finished */ }
+        } else if(boss.attackState === 'slam'){
+          boss.stateTimer--;
+          const bossRect = { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
+          const playerRect = { x: player.x, y: player.y, w: player.w, h: player.h };
+          if(rectsOverlap(bossRect, playerRect) && player.invuln<=0 && !player.isDodging){
+            // much stronger slam
+            player.health -= boss.slamDamage; try{ playSound('playerHit'); }catch(ex){}; player.invuln = 52; player.x = clamp(player.x + (boss.x < player.x ? 18 : -18), 0, W-player.w);
+            shake = Math.max(shake, 14);
+          }
+          // create short damaging puddle under boss when slam finishes
+          if(boss.stateTimer === 2){ bossZones.push({ x: boss.x + boss.w/2, y: boss.y + boss.h/2, r: 22 + boss.phase*6, ttl: 120, dmg: 4 + boss.phase*2 }); }
+          if(boss.stateTimer <= 0){ boss.attackState = 'idle'; if(boss.chainNext){ boss.chainNext = false; boss.attackState = 'shockTele'; boss.telegraph = Math.max(6, 12 - boss.phase*3); boss.attackCooldown = 48 - boss.phase*6; } }
+        } else if(boss.attackState === 'chargeTele'){
+          boss.telegraph--;
+          if(boss.telegraph <= 0){
+            // compute faster charge velocity based on phase
+            const dirx = (player.x + player.w/2) - (boss.x + boss.w/2);
+            const diry = (player.y + player.h/2) - (boss.y + boss.h/2);
+            const m = Math.hypot(dirx, diry) || 1;
+            const baseCharge = 7 + boss.phase*2; // faster charge
+            boss.vx = (dirx/m) * baseCharge; boss.vy = (diry/m) * baseCharge;
+            boss.attackState = 'charge'; boss.stateTimer = 20 + boss.phase*6; boss.flash = 8;
+          }
+        } else if(boss.attackState === 'charge'){
+          boss.x += boss.vx; boss.y += boss.vy;
+          const bossRect2 = { x: boss.x, y: boss.y, w: boss.w, h: boss.h };
+          const playerRect2 = { x: player.x, y: player.y, w: player.w, h: player.h };
+          if(rectsOverlap(bossRect2, playerRect2) && player.invuln<=0 && !player.isDodging){
+            player.health -= boss.chargeDamage; try{ playSound('playerHit'); }catch(e){}; player.invuln = 60; player.x = clamp(player.x + (boss.vx>0?22:-22), 0, W-player.w);
+            shake = Math.max(shake, 20);
+            // leave a scorch zone along the charge path
+            bossZones.push({ x: boss.x + boss.w/2, y: boss.y + boss.h/2, r: 28 + boss.phase*8, ttl: 140, dmg: 6 + boss.phase*3 });
+            // small chance to summon 1-2 minions on heavy charge impact
+            if(boss.summonCooldown <= 0 && Math.random() < 0.45){ spawnEnemy(); if(Math.random() < 0.35) spawnEnemy(); boss.summonCooldown = 260 - boss.phase*30; }
+          }
+          boss.stateTimer--;
+          if(boss.stateTimer <= 0){ boss.attackState = 'idle'; boss.vx = 0; boss.vy = 0; if(boss.chainNext){ boss.chainNext = false; boss.attackState = 'slamTele'; boss.telegraph = Math.max(6, 12 - boss.phase*3); boss.attackCooldown = 48 - boss.phase*6; } }
+        } else if(boss.attackState === 'shockTele'){
+          boss.telegraph--;
+          // flash red more strongly
+          boss.flash = 10;
+          if(boss.telegraph <= 0){ boss.attackState = 'shock'; boss.stateTimer = 0; boss.shockRadius = 12 + boss.phase*8; }
+        } else if(boss.attackState === 'shock'){
+          // expand radius faster in higher phases
+          boss.shockRadius += 6 + boss.phase*3;
+          const cx = boss.x + boss.w/2, cy = boss.y + boss.h/2;
+          const dx2 = (player.x + player.w/2) - cx; const dy2 = (player.y + player.h/2) - cy;
+          const d2 = Math.hypot(dx2, dy2);
+          if(d2 <= boss.shockRadius + 6 && player.invuln<=0 && !player.isDodging){ player.health -= boss.shockDamage + boss.phase*2; try{ playSound('playerHit'); }catch(e){}; player.invuln = 48; shake = Math.max(shake, 16); }
+          // create a lingering damaging ring occasionally
+          if(Math.random() < 0.02){ bossZones.push({ x: cx, y: cy, r: boss.shockRadius + 8, ttl: 100, dmg: 5 + boss.phase*2 }); }
+          if(boss.shockRadius > 180){ boss.attackState = 'idle'; }
+        } else {
+          // idle follow movement (more aggressive speed and slight nudge toward player)
+          boss.x += (ddx/dist2) * boss.speed;
+          boss.y += (ddy/dist2) * boss.speed;
+        }
+
+        // --- regen when player stops attacking ---
+        if(boss.timeSincePlayerHit !== undefined){ boss.timeSincePlayerHit++; if(boss.timeSincePlayerHit > boss.regenDelay){ boss.regenTimer++; if(boss.regenTimer >= boss.regenTick){ boss.hp = Math.min(boss.maxHp, boss.hp + boss.regenAmount); boss.regenTimer = 0; boss.flash = 6; } } }
+
+        // clamp boss on screen
+        boss.x = clamp(boss.x, 8, W - boss.w - 8);
+        boss.y = clamp(boss.y, 8, H - boss.h - GROUND_H - 2);
+
+        if(boss.flash>0) boss.flash--;
+
+        // handle boss death
+        if(boss.hp <= 0){
+          // small loot burst
+          for(let s=0;s<10;s++) spawnCoin(boss.x + boss.w/2 + (Math.random()-0.5)*24, boss.y + boss.h/2 + (Math.random()-0.5)*24);
+          for(let p=0;p<28;p++) spawnCoinParticle(boss.x + boss.w/2 + (Math.random()-0.5)*16, boss.y + boss.h/2 + (Math.random()-0.5)*16);
+          // mark boss defeated and handle level completion flow
+          boss.state = 'dead'; bossMessageTimer = 120; bossPhaseMsgText = '';
+          bossDefeatedForLevel = true;
+          // clear boss reference after message handling (handled in dead branch below)
+        }
+      else if(boss.state === 'dead'){
+        // remove boss after message ends
+        bossMessageTimer--;
+        if(bossMessageTimer <= 0){ boss = null; 
+          // after boss removal, check level completion: boss defeated and kill goal met
+          const lvlData = LEVELS[level];
+          if(bossDefeatedForLevel && levelKills >= (lvlData ? lvlData.killGoal : 0)){
+            // complete level
+            completeLevel();
+          }
+        }
+      }
+    }
+
+    // boss damaging zones update
+    for(let zi = bossZones.length-1; zi>=0; zi--){
+      const z = bossZones[zi];
+      z.ttl--; if(z.ttl <= 0){ bossZones.splice(zi,1); continue; }
+      // hurt player if inside and not dodging
+      const px = player.x + player.w/2, py = player.y + player.h/2;
+      const d = Math.hypot(px - z.x, py - z.y);
+      if(d <= z.r){
+        if(player.invuln <= 0 && !player.isDodging){ player.health -= z.dmg; player.invuln = 28; shake = Math.max(shake, 10); try{ playSound('playerHit'); }catch(e){} }
+      }
+    }
+
+    if(player.invuln>0) player.invuln--;
+
+    // spawn logic (spawnInterval can reduce slowly to increase difficulty)
+    spawnTimer++;
+    const df = computeDifficulty();
+    // effective spawn interval decreases smoothly with difficulty scale
+    const minSpawn = 60; // cap so it never becomes too fast
+    const effectiveSpawn = Math.round(spawnInterval - df.scale * (spawnInterval - minSpawn));
+    if(spawnTimer >= effectiveSpawn){
+      spawnTimer = 0;
+      // don't spawn normal enemies during a boss encounter
+      if(!boss){ if(enemies.length < maxEnemies) spawnEnemy(); if(Math.random() < 0.35 && maxEnemies < 12) maxEnemies++; }
+    }
+    // slowly increase spawn rate over time
+    if(frame % 600 === 0 && spawnInterval > 50) spawnInterval -= 8;
+
+    // update HUD text is drawn on canvas in draw(); we keep DOM hud hidden
+    const dfHud = computeDifficulty();
+
+    // decrement boss message timer if shown
+    if(bossMessageTimer>0) bossMessageTimer--;
+
+  if(player.health <= 0 && !gameOver){
+    // Enter game over state - stop game updates and show the game over screen
+    gameOver = true;
+    paused = false;
+    shopOpen = false;
+    // freeze action: clear active enemies/projectiles
+    enemies.length = 0;
+    projectiles.length = 0;
+    // ensure no immediate respawn
+    spawnTimer = 0;
+  }
+
+  }
+
+  function resetCombo(){ comboStep = 0; comboTimer = 0; queuedNext = false; currentHitRecords = null; comboIndicatorTimer = 0; }
+
+  // helper when a regular enemy dies
+  function enemyKilledAt(cx, cy){
+    // spawn single coin as before
+    spawnCoin(cx, cy);
+    // track kills (both total and per-level)
+    totalKills++;
+    levelKills++;
+
+    // when level kill goal reached, spawn the boss for this level (if configured)
+    const lvlData = LEVELS[level];
+    if(lvlData && lvlData.bossEnabled && levelKills >= lvlData.killGoal && !bossSpawnedForLevel){
+      // mark spawned and start boss encounter for current level
+      bossSpawnedForLevel = true;
+      startBossEncounterForLevel(level);
+    }
+  }
+
+  function startBossEncounter(){
+    // deprecated single-level start: prefer startBossEncounterForLevel
+    startBossEncounterForLevel(level);
+  }
+
+  // Start boss encounter tuned to a specific level
+  function startBossEncounterForLevel(levelIndex){
+    const lvlData = LEVELS[levelIndex] || LEVELS[1];
+    bossIntroTimer = 90;
+    bossMessageTimer = 120;
+    bossSpawnedForLevel = true;
+    bossDefeatedForLevel = false;
+    // create boss (HP exactly 99).
+    // For Level 3 (Farm) spawn the Nitro boss, a themed orange crate-like enemy.
+    if(levelIndex === 3){
+      boss = {
+        x: W/2 - 14,
+        y: -32,
+        w: 28, h: 28,
+        hp: 99,
+        maxHp: 99,
+        flash: 0,
+        state: 'enter', // enter | active | dead
+        stateTimer: 0,
+        attackState: 'idle', // idle | *_Tele | *_exec
+        telegraph: 0,
+        attackCooldown: 72, // initial cooldown
+        vx: 0, vy: 0,
+        speed: 0.42, // slower than player
+        closeDamage: 20,
+        chargeDamage: 28,
+        areaDamage: 10,
+        chainChance: 0.08,
+        summonCooldown: 0,
+        phase: 1,
+        type: 'nitro',
+        name: 'NITRO',
+        id: Math.random()
+      };
+    } else {
+      boss = {
+        x: W/2 - 12,
+        y: -28,
+        w: 24, h: 24,
+        hp: 99,
+        maxHp: 99,
+        flash: 0,
+        state: 'enter', // enter | active | dead
+        stateTimer: 0,
+        attackState: 'idle',
+        telegraph: 0,
+        attackCooldown: Math.max(12, Math.round(60 - levelIndex * 3)),
+        vx: 0, vy: 0,
+        speed: 0.62 + (levelIndex * 0.03),
+        slamDamage: 14 + Math.floor(levelIndex / 2),
+        chargeDamage: 20 + Math.floor(levelIndex / 2),
+        shockDamage: 12 + Math.floor(levelIndex / 3),
+        chainChance: Math.min(0.6, 0.12 + levelIndex * 0.04),
+        summonCooldown: 0,
+        timeSincePlayerHit: 0,
+        regenDelay: Math.max(120, 240 - levelIndex * 6),
+        regenAmount: 2,
+        regenTick: Math.max(20, 40 - levelIndex),
+        regenTimer: 0,
+        playerStillCounter: 0,
+        phase: 1,
+        id: Math.random()
+      };
+    }
+    // pause regular spawn briefly
+    spawnTimer = 0;
+    // reduce normal spawning while boss is alive
+    maxEnemies = Math.max(4, Math.round(maxEnemies * 0.6));
+  }
+
+  // === Rendering ===
+  function draw(){
+    // start screen: special full-screen rendering
+    if(gameState === 'start'){
+      drawStartScreen();
+      return;
+    }
+    // apply screen shake
+    const sx = Math.round((Math.random()*2-1) * shake);
+    const sy = Math.round((Math.random()*2-1) * shake);
+    if(shake>0) shake = Math.max(0, shake-0.5);
+
+    ctx.save();
+    ctx.fillStyle = '#081018'; ctx.fillRect(0,0,W,H);
+    ctx.translate(sx, sy);
+
+  // background (buildings, ground) drawn before characters
+  drawBackground();
+
+  // Debug override: show a bright background and player sprite for visibility checks
+  if(typeof DEBUG_FORCE_VISIBLE !== 'undefined' && DEBUG_FORCE_VISIBLE){
+    ctx.fillStyle = '#ffd99a'; ctx.fillRect(0,0,W,H);
+    // draw a clear ground line
+    ctx.fillStyle = '#cfa36a'; ctx.fillRect(0, H - 26, W, 26);
+    // draw the player in center
+    const px = Math.round(W/2 - player.w/2), py = Math.round(H/2 - player.h/2);
+    drawPlayerAppearance(px, py, 1, false);
+    // short debug label
+    drawOutlinedText('DEBUG VISIBLE MODE', 10, 10, { font: '12px monospace', color: '#000' });
+    ctx.restore();
+    return;
+  }
+
+  // quick debug overlay if enabled
+  if(window.__debug_draw_test && window.__debug_draw_testTimer > 0){
+    ctx.fillStyle = 'magenta'; ctx.fillRect(12,12,80,48);
+    drawOutlinedText('DEBUG RUN', 56, 36, { font: '12px monospace', align: 'center', baseline: 'middle', color: '#fff' });
+    window.__debug_draw_testTimer--;
+  }
+
+  // subtle shadows under player and enemies (pixel-style rectangles)
+  drawShadows();
+
+  // coins drawn after shadows so they sit on the ground (and remain visible)
+  drawCoins();
+
+  // draw boss (if present) behind player or in front? we'll draw after player so it's visible
+  if(boss){ drawBoss(boss); }
+
+  // draw player
+  // draw dodge afterimages (behind player)
+  for(let i=dodgeTrail.length-1;i>=0;i--){
+    const t = dodgeTrail[i];
+    const a = (t.ttl / 10) * (t.alpha || 0.9);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(160,97,43,1)'; // bear-brown afterimage
+    ctx.fillRect(Math.round(t.x), Math.round(t.y), player.w, player.h);
+    ctx.globalAlpha = 1;
+    t.ttl--; if(t.ttl<=0) dodgeTrail.splice(i,1);
+  }
+
+  // choose appearance based on equipped skin
+  drawPlayerAppearance(player.x, player.y, player.facing, player.invuln>0 || player.isDodging);
+
+  // draw punch flash/effect if active (left click)
+  if(punchFlashTimer > 0){
+    const f = punchFlashTimer;
+    const range = 28;
+    const hx = player.facing>0 ? player.x + player.w : player.x - range;
+    const hy = player.y + 6;
+    ctx.globalAlpha = Math.min(0.9, f/8 * 0.6);
+    ctx.fillStyle = '#ffd56a';
+    ctx.fillRect(Math.round(hx), Math.round(hy), range, player.h - 10);
+    ctx.globalAlpha = 1;
+  }
+
+    // draw melee slash effects for active combo (visual when in swing or just after)
+    if(comboStep>0){
+      const step = comboStep; const m = melee[step];
+      // draw effect when in recent swing
+      if( (attackTimer>0 && (m.duration - attackTimer) <= m.hitEnd + 2) || (hitStop>0) ){
+        const hx = player.facing>0 ? player.x + player.w : player.x - m.range;
+        const hy = player.y + 6;
+        ctx.fillStyle = m.color; ctx.globalAlpha = 0.9;
+        ctx.fillRect(Math.round(hx), Math.round(hy), m.range, player.h-10);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // draw projectiles
+    ctx.fillStyle = '#8ff7ff'; for(const p of projectiles) ctx.fillRect(Math.round(p.x), Math.round(p.y), p.w, p.h);
+
+  // draw enemies
+  for(const e of enemies) drawEnemy(e);
+
+  // boss can be damaged by projectiles/hits: simple collision check with projectiles
+  if(boss && boss.state === 'active'){
+    // projectiles hitting boss
+  for(let i = projectiles.length-1;i>=0;i--){ const p = projectiles[i]; const prect = { x:p.x,y:p.y,w:p.w,h:p.h }; const brect = { x:boss.x, y:boss.y, w:boss.w, h:boss.h }; if(rectsOverlap(prect,brect)){ const pdmg = (p.dmg !== undefined) ? p.dmg : (12 + (player.attackBonus||0)); boss.hp -= pdmg; boss.flash = 6; try{ playSound('hit'); }catch(e){}; projectiles.splice(i,1); /* small knock */ boss.x += ((p.dx||0)>0? 6 : -6); /* reset regen/aggro timers so boss won't regen while being hit */ boss.timeSincePlayerHit = 0; boss.regenTimer = 0; if(boss.summonCooldown <= 0 && Math.random() < 0.12){ /* small chance to spawn 1 minion when hit */ spawnEnemy(); boss.summonCooldown = 240; } if(boss.hp<=0) break; } }
+    // melee hit detection: use existing melee windows but also check boss
+  if(attackTimer>0 && comboStep>0){ const m = melee[comboStep]; const elapsed = m.duration - attackTimer; if(elapsed >= m.hitStart && elapsed <= m.hitEnd){ const hx = player.facing>0 ? player.x + player.w : player.x - m.range; const hy = player.y + 4; const hb = { x: hx, y: hy, w: m.range, h: player.h-6 }; const brect2 = { x: boss.x, y: boss.y, w: boss.w, h: boss.h }; if(rectsOverlap(hb,brect2)){ boss.hp -= (m.dmg + (player.attackBonus||0)); boss.flash = 8; try{ playSound('hit'); }catch(e){}; boss.x += (player.facing>0? m.knock*2 : -m.knock*2); hitStop = 6; /* reset regen/aggro timers */ boss.timeSincePlayerHit = 0; boss.regenTimer = 0; if(boss.summonCooldown <= 0 && Math.random() < 0.18){ spawnEnemy(); boss.summonCooldown = 200; } if(boss.hp<=0){ /* handled in update loop */ } } } }
+  }
+
+    // HUD: health bar
+    // draw boss damaging zones (visual)
+    for(const z of bossZones){
+      ctx.save();
+      ctx.globalAlpha = 0.16;
+      ctx.fillStyle = '#ff4433';
+      ctx.beginPath(); ctx.arc(Math.round(z.x), Math.round(z.y), Math.round(z.r), 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 0.32; ctx.strokeStyle = '#ffb4a6'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(Math.round(z.x), Math.round(z.y), Math.round(z.r)+2, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+
+    drawHUD();
+
+    // combo UI
+    drawComboUI();
+
+    // Celebration overlay (draw on top of world but beneath UI overlays)
+    if(inCelebration){
+      // screen flash
+      if(screenFlash>0){ ctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.6, screenFlash/18*0.6) + ')'; ctx.fillRect(0,0,W,H); }
+      // confetti particles
+      for(const p of confetti){ ctx.fillStyle = p.color; ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size); }
+
+      // victory banner box
+      const bw = Math.round(W * 0.82); const bh = 80; const bx = Math.round((W - bw)/2); const by = Math.round(H*0.28);
+      ctx.fillStyle = 'rgba(8,12,24,0.86)'; ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = 'rgba(255,213,122,0.16)'; ctx.strokeRect(bx, by, bw, bh);
+      // big texts
+      drawCenteredText(victoryMsg || 'LEVEL COMPLETE!', Math.round(W/2), by + 18, { font: '20px monospace', bg: false, color: '#ffd24a' });
+      drawCenteredText('YOU WON LEVEL ' + Math.max(1, level-1) + '!', Math.round(W/2), by + 40, { font: '14px monospace', bg: false, color: '#ffebc8' });
+  drawCenteredText('WELCOME TO LEVEL ' + level + ': ' + ((LEVELS[level] && LEVELS[level].name) || ''), Math.round(W/2), by + 58, { font: '12px monospace', bg: false, color: '#cfe7f2' });
+
+      // reward message
+      if(rewardTimer>0 && rewardMsg){ drawCenteredText(rewardMsg, Math.round(W/2), by + bh + 18, { font: '13px monospace', bg: true, color: '#ffd24a' }); }
+    }
+
+    // draw boss messages
+    if(bossMessageTimer > 0){
+      const msg = boss && boss.state==='dead' ? 'BOSS DEFEATED' : 'BOSS FIGHT';
+      drawCenteredText(msg, Math.round(W/2), 28, { font: '14px monospace', bg: false, color: '#ffebc8' });
+    }
+    // draw phase transition headline if set
+    if(bossPhaseMsgTimer > 0 && bossPhaseMsgText){
+      drawCenteredText(bossPhaseMsgText, Math.round(W/2), 46, { font: '14px monospace', bg: true, color: '#ff8a6b' });
+    }
+
+    // level transition message
+    if(levelMessageTimer > 0){
+      drawCenteredText(levelMsgText, Math.round(W/2), 48, { font: '14px monospace', bg: true, color: '#ffd24a' });
+    }
+
+    // skin switch message (brief)
+    if(skinMsgTimer > 0){
+      drawCenteredText(skinMsgText, Math.round(W/2), 48, { font: '12px monospace', bg: true, color: '#ffd24a' });
+    }
+
+    // shop overlay
+    if(shopOpen) drawShopOverlay();
+
+    // Pause overlay
+    if(paused){
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+      drawCenteredText('PAUSED', Math.round(W/2), Math.round(H/2 - 4), { font: '20px monospace', bg: true });
+      drawOutlinedText('Press P to resume', Math.round(W/2), Math.round(H/2 + 18), { font: '12px monospace', align: 'center', baseline: 'middle' });
+    }
+
+    // Game over overlay
+    if(gameOver){
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0,0,W,H);
+      drawCenteredText('GAME OVER', Math.round(W/2), Math.round(H/2 - 22), { font: '20px monospace', bg: true, color: '#ffd24a' });
+      drawOutlinedText('Coins: ' + coinCount, Math.round(W/2), Math.round(H/2 + 6), { font: '12px monospace', align: 'center', baseline: 'middle' });
+  drawOutlinedText('Enemies defeated: ' + totalKills, Math.round(W/2), Math.round(H/2 + 28), { font: '12px monospace', align: 'center', baseline: 'middle' });
+      drawOutlinedText('Press R to restart', Math.round(W/2), Math.round(H/2 + 48), { font: '12px monospace', align: 'center', baseline: 'middle' });
+    }
+
+    // Victory overlay (final game completion)
+    if(gameState === 'victory'){
+      ctx.fillStyle = 'rgba(0,0,0,0.9)'; ctx.fillRect(0,0,W,H);
+      drawCenteredText('YOU BEAT THE GAME!', Math.round(W/2), Math.round(H/2 - 36), { font: '18px monospace', bg: true, color: '#ffd24a' });
+      drawOutlinedText('Total Coins: ' + coinCount, Math.round(W/2), Math.round(H/2 - 6), { font: '12px monospace', align: 'center', baseline: 'middle' });
+      drawOutlinedText('Total Kills: ' + totalKills, Math.round(W/2), Math.round(H/2 + 14), { font: '12px monospace', align: 'center', baseline: 'middle' });
+      drawOutlinedText('Final Level: ' + level, Math.round(W/2), Math.round(H/2 + 34), { font: '12px monospace', align: 'center', baseline: 'middle' });
+    }
+
+    ctx.restore();
+  }
+
+  function drawHealthBar(){ const x=10,y=H-18,w=120,h=8; ctx.fillStyle='#21313a'; ctx.fillRect(x-2,y-2,w+4,h+4); ctx.fillStyle='#2b0b0b'; ctx.fillRect(x,y,w,h); const pct = clamp(player.health / player.maxHealth,0,1); ctx.fillStyle = pct>0.5? '#68d84d' : (pct>0.2? '#e6b02b' : '#d94a4a'); ctx.fillRect(x,y,Math.round(w*pct),h); }
+
+  // Draw top-left HUD with health and coins, top-right difficulty/kills
+  function drawHUD(){
+    // health bar (top-left)
+    const hx = 8, hy = 8, hw = 120, hh = 8;
+  // background panel for HUD text to ensure readability
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(hx-4, hy-4, hw + 140, hh + 36);
+  const pct = clamp(player.health / player.maxHealth, 0, 1);
+  ctx.fillStyle = '#2b0b0b'; ctx.fillRect(hx, hy, hw, hh);
+  ctx.fillStyle = pct>0.5? '#68d84d' : (pct>0.2? '#e6b02b' : '#d94a4a'); ctx.fillRect(hx, hy, Math.round(hw*pct), hh);
+  // HP text (use outlined text)
+  drawOutlinedText('HP: ' + Math.max(0, Math.floor(player.health)) + ' / ' + player.maxHealth, hx + hw + 10, hy + Math.round(hh/2), { font: '12px monospace', align: 'left', baseline: 'middle' });
+
+  // coins (below HP)
+  drawOutlinedText('Coins: ' + coinCount, hx + hw + 10, hy + hh + 10, { font: '12px monospace', align: 'left', baseline: 'middle', color: '#ffd24a' });
+
+  // current level display
+  const curLvlName = (LEVELS[level] && LEVELS[level].name) || '';
+  drawOutlinedText('Level: ' + level + ' ' + curLvlName, hx + hw + 10, hy + hh + 26, { font: '11px monospace', align: 'left', baseline: 'middle', color: '#cfe7f2' });
+
+  // boss health bar (top-center) when boss active
+  if(boss){
+    const bhw = 180, bhh = 10; const bx = Math.round((W - bhw)/2), by = 6;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(bx-4, by-4, bhw+8, bhh+12);
+    const bpct = clamp(boss.hp / boss.maxHp, 0, 1);
+    ctx.fillStyle = '#331111'; ctx.fillRect(bx, by, bhw, bhh);
+    ctx.fillStyle = bpct>0.5? '#ff6b6b' : (bpct>0.25? '#ff9e4a' : '#ffcf6b'); ctx.fillRect(bx, by, Math.round(bhw * bpct), bhh);
+    drawOutlinedText('BOSS HP: ' + Math.max(0, Math.floor(boss.hp)) + ' / ' + boss.maxHp, bx + bhw + 12, by + Math.round(bhh/2), { font: '11px monospace', align: 'left', baseline: 'middle', color: '#ffd6d6' });
+    // show boss phase if present
+    if(boss.phase){ drawOutlinedText('PHASE ' + boss.phase, bx + Math.round(bhw/2), by + bhh + 10, { font: '11px monospace', align: 'center', baseline: 'top', color: '#ffd24a' }); }
+  }
+
+  // dodge cooldown indicator
+  const dbx = hx; const dby = hy + hh + 18; const dbw = 56; const dbh = 6;
+  // small background for dodge bar
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(dbx-3, dby-3, dbw+66, dbh+10);
+  ctx.fillStyle = '#2b2b2b'; ctx.fillRect(dbx, dby, dbw, dbh);
+  const dcPct = clamp(1 - (player.dodgeCooldown / DODGE_COOLDOWN), 0, 1);
+  ctx.fillStyle = player.dodgeCooldown>0 ? '#7a7a7a' : '#68d84d';
+  ctx.fillRect(dbx, dby, Math.round(dbw * dcPct), dbh);
+  drawOutlinedText(player.dodgeCooldown>0 ? 'DODGE CD' : 'DODGE', dbx + dbw + 10, dby + Math.round(dbh/2), { font: '11px monospace', align: 'left', baseline: 'middle' });
+
+      // difficulty / kills (top-right)
+      const df = computeDifficulty();
+      const lvlData = LEVELS[level] || LEVELS[1];
+      const txt = df.label + '  Kills: ' + levelKills + ' / ' + (lvlData.killGoal || 0);
+      ctx.fillStyle = '#fff'; ctx.font = '12px monospace';
+      drawOutlinedText(txt, Math.round(W - 8), 12, { font: '12px monospace', align: 'right', baseline: 'top' });
+      // show current theme
+      drawOutlinedText('Theme: ' + (lvlData.name || ''), Math.round(W - 8), 28, { font: '11px monospace', align: 'right', baseline: 'top', color: '#cfe7f2' });
+  }
+
+  // draw subtle pixel-aligned shadows under player and enemies
+  function drawShadows(){
+    // player shadow
+    const pw = Math.max(6, Math.round(player.w));
+    const px = Math.round(player.x);
+    const py = Math.round(player.y + player.h) - 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.24)';
+    ctx.fillRect(px, py, pw, 3);
+
+    // enemy shadows
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    for(const e of enemies){
+      const ex = Math.round(e.x) + 1;
+      const ey = Math.round(e.y + e.h) - 1;
+      const ew = Math.max(4, Math.round(e.w - 2));
+      ctx.fillRect(ex, ey, ew, 2);
+    }
+  }
+
+  // Draw coins (pixelated small squares)
+  function drawCoins(){
+    for(const c of coins){
+      const cx = Math.round(c.x);
+      const cy = Math.round(c.y);
+      // fake spin: alternate between full width and narrow frame
+      const spinNarrow = c.spinPhase === 1;
+      const sW = Math.max(1, Math.round(c.w * (c.scale || 1) * (spinNarrow ? 0.68 : 1)));
+      const sH = Math.max(1, Math.round(c.h * (c.scale || 1)));
+      // align so coin centers roughly same when width changes
+      const offX = Math.round((c.w - sW)/2);
+
+      // outline (darker) - 1px outline looks good for pixel coins
+      ctx.fillStyle = '#a06a00';
+      ctx.fillRect(cx - offX, cy, sW, sH);
+
+      // main gold inset
+      ctx.fillStyle = '#ffd24a';
+      if(sW > 2 && sH > 2) ctx.fillRect(cx - offX + 1, cy + 1, sW - 2, sH - 2);
+      else ctx.fillRect(cx - offX, cy, sW, sH);
+
+      // tiny inner detail pixel to read as coin face
+      if(!c.collected){
+        ctx.fillStyle = '#ffed9c';
+        if(sW >= 3) ctx.fillRect(cx - offX + 1, cy + Math.max(0, Math.floor(sH/2)-1), 1, 1);
+      }
+
+      // sparkle - occasional bright pixel
+      if(!c.collected && (c.animFrame % 30) === 0){ ctx.fillStyle = '#fff9d6'; ctx.fillRect(cx - offX + (sW>2?1:0), cy, 1,1); }
+    }
+
+    // draw coin particles on top
+    for(const p of coinParticles){
+      ctx.fillStyle = p.color;
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
+    }
+  }
+
+  function drawComboUI(){ const x=10,y=10; if(comboStep>0){ drawOutlinedText('Combo: '+comboStep+'/3', x, y+8, { font: '11px monospace', align: 'left', baseline: 'top' }); // draw timer bar
+    const barW = 80, barH=6; const bx = x, by = y+22; const t = comboIndicatorTimer; const pct = clamp(t / comboWindow, 0,1); ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(bx-2,by-2,barW+4,barH+4); ctx.fillStyle='#333'; ctx.fillRect(bx,by,barW,barH); ctx.fillStyle='#ffd56a'; ctx.fillRect(bx,by,Math.round(barW*pct),barH);
+  } }
+
+  // shop overlay rendering
+  function drawShopOverlay(){
+    const panelW = 260, panelH = 200;
+    const px = Math.round(W/2 - panelW/2), py = Math.round(H/2 - panelH/2);
+    // dim background
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    // panel
+    ctx.fillStyle = '#0b1320'; ctx.fillRect(px, py, panelW, panelH);
+  drawOutlinedText('SHOP', px + 10, py + 14, { font: '14px monospace', align: 'left', baseline: 'top' });
+  drawOutlinedText('Spend coins to upgrade Super Bear', px + 10, py + 32, { font: '11px monospace', align: 'left', baseline: 'top', color: '#cfe7f2' });
+
+    const items = ['attack','speed','health'];
+    for(let i=0;i<items.length;i++){
+      const id = items[i]; const it = shopItems[id];
+      const bx = px + 10; const by = py + 40 + i*28; const bw = panelW - 20; const bh = 24;
+      // box
+      ctx.fillStyle = '#091218'; ctx.fillRect(bx, by, bw, bh);
+  // name and level
+  drawOutlinedText(it.name + '  Lv.' + it.level, bx + 4, by + 12, { font: '12px monospace', align: 'left', baseline: 'top' });
+  // cost and buy button
+  const costTxt = it.level >= it.maxLevel ? 'MAX' : ('Cost: ' + it.cost);
+  drawOutlinedText(costTxt, bx + 100, by + 12, { font: '11px monospace', align: 'left', baseline: 'top', color: coinCount >= it.cost ? '#ffd24a' : '#7a7a7a' });
+      // draw buy box on right
+      const btnW = 46, btnH = 18; const btnX = bx + bw - btnW - 4, btnY = by + 3;
+      ctx.fillStyle = (coinCount >= it.cost && it.level < it.maxLevel) ? '#2b8a3e' : '#333'; ctx.fillRect(btnX, btnY, btnW, btnH);
+  const label = it.level >= it.maxLevel ? 'MAX' : 'BUY';
+  drawOutlinedText(label, btnX + 12, btnY + 10, { font: '11px monospace', align: 'left', baseline: 'top' });
+      // small description
+      ctx.font = '9px monospace'; ctx.fillStyle = '#9fb3c6';
+      let desc = '';
+      if(id==='attack') desc = '+2 damage per level';
+      if(id==='speed') desc = '+0.28 speed per level';
+      if(id==='health') desc = '+12 max HP per level';
+      drawOutlinedText(desc, bx + 4, by + 20, { font: '10px monospace', align: 'left', baseline: 'top', color: '#9fb3c6' });
+    }
+
+    // Skin preview & purchase area (below upgrades)
+    const skinAreaY = py + 40 + items.length*28 + 8;
+    const skinBoxX = px + 10, skinBoxY = skinAreaY, skinBoxW = panelW - 20, skinBoxH = 72;
+    ctx.fillStyle = '#091218'; ctx.fillRect(skinBoxX, skinBoxY, skinBoxW, skinBoxH);
+  drawOutlinedText('Skins', skinBoxX + 6, skinBoxY + 12, { font: '13px monospace', align: 'left', baseline: 'top' });
+
+    // draw Captain Panda preview on left
+    const previewX = skinBoxX + 8, previewY = skinBoxY + 18;
+    drawCaptainPanda(previewX, previewY, 1, false);
+
+    // info and button on right
+    const infoX = previewX + 36, infoY = previewY + 4;
+    const skinInfo = shopSkins[0];
+  drawOutlinedText(skinInfo.name, infoX, infoY, { font: '12px monospace', align: 'left', baseline: 'top', color: '#ffd24a' });
+  drawOutlinedText('Cost: ' + skinInfo.cost + ' coins', infoX, infoY + 14, { font: '11px monospace', align: 'left', baseline: 'top', color: '#9fb3c6' });
+
+    // status text and button
+    const owned = !!unlockedSkins[SKIN_CAPTAIN];
+    const eq = (equippedSkin === SKIN_CAPTAIN);
+    let statusTxt = owned ? (eq ? 'Equipped' : 'Owned') : 'Locked';
+  drawOutlinedText('Status: ' + statusTxt, infoX, infoY + 28, { font: '11px monospace', align: 'left', baseline: 'top' });
+
+    const btnW = 64, btnH = 20; const btnX = skinBoxX + skinBoxW - btnW - 8, btnY = skinBoxY + Math.round((skinBoxH - btnH)/2);
+    // choose color based on state
+    if(!owned){ ctx.fillStyle = coinCount >= skinInfo.cost ? '#2b8a3e' : '#333'; }
+    else { ctx.fillStyle = eq ? '#606060' : '#2b6cff'; }
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+  let btnLabel = 'Buy'; if(owned) btnLabel = eq ? 'Equipped' : 'Equip';
+  drawOutlinedText(btnLabel, btnX + 12, btnY + 10, { font: '12px monospace', align: 'left', baseline: 'top' });
+
+    // footer
+    drawOutlinedText('Click BUY to purchase. Press B to close.', px + 10, py + panelH - 12, { font: '10px monospace', align: 'left', baseline: 'top', color: '#9fb3c6' });
+  }
+
+  function drawBear(x,y,facing,invulnerable){ const ox=Math.round(x), oy=Math.round(y); const brown='#a2612b', red='#d32b2b', cyan='#44f0e8', yellow='#f5d23a'; ctx.fillStyle=brown; ctx.fillRect(ox+2,oy+0,10,8); ctx.fillRect(ox+0,oy+0,3,3); ctx.fillRect(ox+11,oy+0,3,3); ctx.fillStyle='#ff3b3b'; ctx.fillRect(ox+2,oy+2,4,3); ctx.fillRect(ox+8,oy+2,4,3); ctx.fillStyle='#000'; ctx.fillRect(ox+3,oy+3,1,1); ctx.fillRect(ox+9,oy+3,1,1); ctx.fillStyle=red; ctx.fillRect(ox+1,oy+8,12,12); ctx.fillStyle=cyan; ctx.fillRect(ox-1,oy+10,3,3); ctx.fillRect(ox+12,oy+10,3,3); ctx.fillRect(ox+1,oy+19,5,3); ctx.fillRect(ox+8,oy+19,5,3); ctx.fillStyle=yellow; ctx.fillRect(ox+5,oy+11,4,1); ctx.fillRect(ox+4,oy+12,6,1); ctx.fillRect(ox+5,oy+13,4,1); if(invulnerable){ ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fillRect(ox,oy,player.w,player.h);} }
+
+  // Captain Panda pixel skin drawn with rectangles (fits player.w x player.h)
+  function drawCaptainPanda(x,y,facing,invulnerable){
+    const ox = Math.round(x), oy = Math.round(y);
+    const white = '#ffffff'; const black = '#000000'; const red = '#d32b2b'; const blue = '#2b7ff0';
+    // HEAD - white with black ears
+    // ears (small black blocks)
+    ctx.fillStyle = black; ctx.fillRect(ox+1, oy+0, 3, 3); ctx.fillRect(ox+10, oy+0, 3, 3);
+    // head main white
+    ctx.fillStyle = white; ctx.fillRect(ox+2, oy+0, 10, 8);
+    // blue eye-mask area
+    ctx.fillStyle = blue; ctx.fillRect(ox+3, oy+2, 8, 4);
+    // eyes (black ovals - as 2x3 vertical blocks)
+    ctx.fillStyle = black; ctx.fillRect(ox+4, oy+2, 2, 3); ctx.fillRect(ox+8, oy+2, 2, 3);
+    // small smile
+    ctx.fillRect(ox+6, oy+5, 2, 1);
+
+    // TORSO
+    // red scarf / shoulder band across upper torso
+    ctx.fillStyle = red; ctx.fillRect(ox+1, oy+8, 12, 6);
+    // white torso under scarf
+    ctx.fillStyle = white; ctx.fillRect(ox+2, oy+14, 10, 6);
+    // black 'P' chest mark (simple blocky P)
+    ctx.fillStyle = black; ctx.fillRect(ox+6, oy+10, 1, 6); // vertical stroke
+    ctx.fillRect(ox+7, oy+10, 2, 2); ctx.fillRect(ox+7, oy+12, 2, 1);
+
+    // ARMS (red)
+    ctx.fillStyle = red; ctx.fillRect(ox+0, oy+10, 2, 6); ctx.fillRect(ox+12, oy+10, 2, 6);
+
+    // LOWER BODY - blue shorts and legs
+    ctx.fillStyle = blue; ctx.fillRect(ox+3, oy+20, 4, 4); ctx.fillRect(ox+7, oy+20, 4, 4);
+
+    // slight black outline for readability
+    ctx.fillStyle = black; ctx.fillRect(ox+2, oy+7, 10, 1);
+
+    if(invulnerable){ ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fillRect(ox,oy,player.w,player.h); }
+  }
+
+  // draw chosen player appearance
+  function drawPlayerAppearance(x,y,facing,invul){
+    ctx.save();
+    if(equippedSkin === SKIN_CAPTAIN){ drawCaptainPanda(x,y,facing,invul); }
+    else { drawBear(x,y,facing,invul); }
+    // quick flash overlay when switching skins
+    if(skinSwitchFlash > 0){
+      const alpha = Math.min(0.6, skinSwitchFlash / 10 * 0.6);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(Math.round(x), Math.round(y), player.w, player.h);
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
+  // --- Text helpers for improved readability ---
+  // Draw outlined text (black outline + white fill) for contrast
+  function drawOutlinedText(text, x, y, opts){
+    opts = opts || {};
+    const font = opts.font || '12px monospace';
+    const align = opts.align || 'left';
+    const baseline = opts.baseline || 'top';
+    const color = opts.color || '#ffffff';
+    const outlineAlpha = (opts.outlineAlpha===undefined)? 0.95 : opts.outlineAlpha;
+
+    ctx.font = font;
+    ctx.textAlign = align;
+    ctx.textBaseline = baseline;
+
+    // draw simple 1px "outline" by painting black at four offsets
+    ctx.fillStyle = 'rgba(0,0,0,' + outlineAlpha + ')';
+    ctx.fillText(text, x - 1, y - 1);
+    ctx.fillText(text, x + 1, y - 1);
+    ctx.fillText(text, x - 1, y + 1);
+    ctx.fillText(text, x + 1, y + 1);
+
+    // main text on top
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+  }
+
+  // Draw centered text with optional dark semi-transparent background box
+  function drawCenteredText(text, cx, cy, opts){
+    opts = opts || {};
+    const font = opts.font || '18px monospace';
+    const padding = opts.padding || 8;
+    ctx.font = font;
+    const tw = ctx.measureText(text).width;
+    const bh = parseInt(font,10) || 16;
+    if(opts.bg){
+      ctx.fillStyle = opts.bgColor || 'rgba(0,0,0,0.6)';
+      ctx.fillRect(Math.round(cx - tw/2 - padding), Math.round(cy - bh/2 - padding/2), Math.round(tw + padding*2), Math.round(bh + padding));
+    }
+    drawOutlinedText(text, cx, cy - (bh/2), { font: font, align: 'center', baseline: 'middle', color: opts.color || '#ffffff' });
+  }
+
+  // draw a small pixel-style angry dog (12x12) using only rectangles
+  function drawEnemy(e){
+    const ox = Math.round(e.x), oy = Math.round(e.y);
+    // colors
+    const gray = '#9a9a9a';
+    const dark = '#6f6f6f';
+    const black = '#000000';
+    const white = '#ffffff';
+  // base body/head color (flash white if recently hit)
+  const base = e.flash>0 ? white : gray;
+
+    // HEAD (main square)
+    // head area: 8x6 at (ox+2, oy+0)
+    ctx.fillStyle = base;
+    ctx.fillRect(ox+2, oy+0, 8, 6);
+
+    // EARS (asymmetrical floppy ears using 2-3 pixels each)
+    // left ear (slightly lower)
+    ctx.fillStyle = gray; ctx.fillRect(ox+0, oy+3, 2, 3);
+    // right ear (slightly higher)
+    ctx.fillRect(ox+10, oy+1, 2, 2);
+
+    // EYEBROWS - sharp angry V (black pixels)
+    ctx.fillStyle = black;
+    ctx.fillRect(ox+4, oy+0, 1, 1);
+    ctx.fillRect(ox+5, oy+1, 1, 1);
+
+    // EYES (white with black pupils)
+    ctx.fillStyle = white; ctx.fillRect(ox+3, oy+2, 1,1); ctx.fillRect(ox+6, oy+2, 1,1);
+    ctx.fillStyle = black; ctx.fillRect(ox+3, oy+2, 1,1); ctx.fillRect(ox+6, oy+2, 1,1);
+
+    // MOUTH - black frown (2-3 pixels)
+    ctx.fillStyle = black; ctx.fillRect(ox+4, oy+4, 2,1); ctx.fillRect(ox+3, oy+5, 1,1); ctx.fillRect(ox+6, oy+5, 1,1);
+
+    // BODY - small rectangle under head
+    ctx.fillStyle = dark; ctx.fillRect(ox+3, oy+6, 6, 4);
+
+    // ARMS / FRONT LEGS - small side pixels
+    ctx.fillRect(ox+1, oy+7, 2,2);
+    ctx.fillRect(ox+9, oy+7, 2,2);
+
+    // BACK LEGS - two small blocks at bottom
+    ctx.fillRect(ox+3, oy+10, 2,2);
+    ctx.fillRect(ox+7, oy+10, 2,2);
+
+    // TAIL - small pixel sticking out from back
+    ctx.fillRect(ox+11, oy+8, 1,1);
+
+    // If telegraphing attack, overlay a red pixel flash
+    if(e.telegraph > 0){ ctx.fillStyle = 'rgba(255,40,40,0.9)'; ctx.fillRect(ox+2, oy+0, 8, 6); }
+  }
+
+  // Draw the boss (larger pixel-art rectangle-based)
+  function drawBoss(b){
+    const ox = Math.round(b.x), oy = Math.round(b.y);
+
+    // telegraph/back-glow (red) when preparing an attack
+    if(b.attackState && (b.attackState.endsWith('Tele') || b.attackState === 'charge')){
+      ctx.fillStyle = 'rgba(200,40,40,0.12)'; ctx.fillRect(ox-6, oy-6, b.w+12, b.h+12);
+    }
+
+    // Pixel-art boss (24x24) composed from rectangles. All coordinates pixel-aligned.
+    // Palette
+    const gray = '#8b8b8b';
+    const darkGray = '#5a5a5a';
+    const lightGray = '#cfcfcf';
+    const white = '#ffffff';
+    const black = '#000000';
+    const yellow = '#ffd24a';
+
+    // Nitro-specific pixel-art (28x28) using only rectangles
+    if(b.type === 'nitro'){
+      const orange = '#ff8a2b';
+      const darkOrange = '#d86e17';
+      const ox2 = ox, oy2 = oy;
+      // main body
+      ctx.fillStyle = (b.flash>0 ? '#ffffff' : orange);
+      ctx.fillRect(ox2, oy2, b.w, b.h);
+      // shading band across top
+      ctx.fillStyle = darkOrange; ctx.fillRect(ox2, oy2 + 2, b.w, 6);
+      // angry eyebrows (black thin rectangles)
+      ctx.fillStyle = black; ctx.fillRect(ox2 + 6, oy2 + 4, 5, 1); ctx.fillRect(ox2 + 17, oy2 + 4, 5, 1);
+      // vertical eyes (white slits with dark pupils)
+      ctx.fillStyle = white; ctx.fillRect(ox2 + 8, oy2 + 7, 2, 6); ctx.fillRect(ox2 + 18, oy2 + 7, 2, 6);
+      ctx.fillStyle = black; ctx.fillRect(ox2 + 9, oy2 + 8, 1, 4); ctx.fillRect(ox2 + 19, oy2 + 8, 1, 4);
+      // big grin (black) with white teeth blocks
+      ctx.fillStyle = black; ctx.fillRect(ox2 + 6, oy2 + 18, b.w - 12, 5);
+      ctx.fillStyle = white; ctx.fillRect(ox2 + 8, oy2 + 19, 2, 3); ctx.fillRect(ox2 + 12, oy2 + 19, 2, 3); ctx.fillRect(ox2 + 16, oy2 + 19, 2, 3);
+      // arms
+      ctx.fillStyle = darkOrange; ctx.fillRect(ox2 - 4, oy2 + 10, 4, 3); ctx.fillRect(ox2 + b.w, oy2 + 10, 4, 3);
+      // legs
+      ctx.fillRect(ox2 + 6, oy2 + b.h - 4, 4, 4); ctx.fillRect(ox2 + b.w - 10, oy2 + b.h - 4, 4, 4);
+      // if flashing (hit), overlay a faint white
+      if(b.flash>0){ ctx.globalAlpha = 0.6; ctx.fillStyle = '#ffffff'; ctx.fillRect(ox2, oy2, b.w, b.h); ctx.globalAlpha = 1; }
+      return;
+    }
+
+    // Draw body (simple rectangle under head)
+    // Head area: top 10px, body area: below
+    // HEAD (blocky round-ish with ears)
+    ctx.fillStyle = (b.flash>0 ? white : lightGray);
+    // head main box (8x8 centered)
+    ctx.fillRect(ox + 8, oy + 0, 8, 8);
+    // ears (two 3x3 blocks) - left and right
+    ctx.fillRect(ox + 6, oy + 0, 2, 3);
+    ctx.fillRect(ox + 16, oy + 0, 2, 3);
+
+    // FACE: big white eye area (pixel simplified)
+    ctx.fillStyle = white;
+    // left eye area (2x3)
+    ctx.fillRect(ox + 9, oy + 2, 2, 3);
+    // right eye area (2x3)
+    ctx.fillRect(ox + 13, oy + 2, 2, 3);
+    // pupils (black vertical)
+    ctx.fillStyle = black;
+    ctx.fillRect(ox + 10, oy + 2, 1, 3);
+    ctx.fillRect(ox + 14, oy + 2, 1, 3);
+
+    // mouth: neutral/confused (small 2x1 or 3x1)
+    ctx.fillRect(ox + 11, oy + 5, 2, 1);
+
+    // BODY
+    ctx.fillStyle = gray;
+    ctx.fillRect(ox + 6, oy + 8, 12, 10);
+
+    // Yellow S on chest (simplified, few pixels)
+    ctx.fillStyle = yellow;
+    ctx.fillRect(ox + 11, oy + 9, 1, 1);
+    ctx.fillRect(ox + 10, oy + 10, 1, 1);
+    ctx.fillRect(ox + 11, oy + 11, 1, 1);
+    ctx.fillRect(ox + 12, oy + 12, 1, 1);
+    ctx.fillRect(ox + 11, oy + 13, 1, 1);
+
+    // ARMS (asymmetrical)
+    // left arm slightly raised
+    ctx.fillStyle = gray;
+    ctx.fillRect(ox + 4, oy + 9, 3, 2);
+    ctx.fillRect(ox + 3, oy + 7, 2, 2);
+    // right arm down
+    ctx.fillRect(ox + 18, oy + 12, 3, 2);
+
+    // LEGS (two small rectangles)
+    ctx.fillRect(ox + 8, oy + 18, 3, 4);
+    ctx.fillRect(ox + 13, oy + 18, 3, 4);
+
+    // hit flash: white overlay briefly handled by drawing white where relevant
+    if(b.flash > 0){ ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fillRect(ox, oy, b.w, b.h); }
+
+    // boss health bar top-center
+    const barW = 160; const bx = Math.round(W/2 - barW/2); const by = 6;
+    ctx.fillStyle = '#111'; ctx.fillRect(bx-2, by-2, barW+4, 18);
+    // simple continuous bar for clarity (99 HP exact displayed)
+    const pct = clamp(b.hp / b.maxHp, 0, 1);
+    ctx.fillStyle = '#2b0b0b'; ctx.fillRect(bx, by, barW, 10);
+    ctx.fillStyle = '#ffd24a'; ctx.fillRect(bx, by, Math.round(barW * pct), 10);
+    // label and exact HP
+  drawOutlinedText('BOSS FIGHT', bx + barW/2, by + 8, { font: '12px monospace', align: 'center', baseline: 'middle' });
+  drawOutlinedText('Boss HP: ' + Math.max(0, Math.floor(b.hp)) + ' / ' + b.maxHp, bx + 6, by + 20, { font: '10px monospace', align: 'left', baseline: 'top' });
+  }
+
+  // main loop
+  function loop(){ update(); draw(); requestAnimationFrame(loop); }
+
+  // start
+  initBuildings();
+  spawnEnemy(); spawnEnemy();
+  // apply level config so spawnInterval/maxEnemies reflect the level
+  applyLevelSettings(level);
+  // Auto-start toggle for debugging (set true to skip title screen)
+  const AUTO_START = false;
+  if(AUTO_START){ console.log('AUTO_START enabled — starting game'); startGame(); }
+  loop();
+  // Debug visibility override: draw a bright scene and the player so sprites are obvious
+  // Set to false to restore normal game visuals
+  const DEBUG_FORCE_VISIBLE = false;
+
+  // misc
+  window.addEventListener('blur', ()=>{ for(const k in keys) keys[k]=false; });
+  canvas.tabIndex = 1000; canvas.style.outline='none';
+  // make it obvious the canvas is clickable
+  canvas.style.cursor = 'pointer';
+  canvas.addEventListener('mousedown', (evt)=>{
+    const rect = canvas.getBoundingClientRect();
+    const mx = (evt.clientX - rect.left) * (canvas.width / rect.width);
+    const my = (evt.clientY - rect.top) * (canvas.height / rect.height);
+    if(shopOpen){
+      // compute shop item button positions (must match drawShopOverlay layout)
+      const panelW = 260, panelH = 200;
+      const px = Math.round(W/2 - panelW/2), py = Math.round(H/2 - panelH/2);
+      const items = ['attack','speed','health'];
+      for(let i=0;i<items.length;i++){
+        const bx = px + 10; const by = py + 40 + i*28; const bw = panelW - 20; const bh = 24;
+        const btnW = 46, btnH = 18; const btnX = bx + bw - btnW - 4, btnY = by + 3;
+        if(mx >= btnX && mx <= btnX + btnW && my >= btnY && my <= btnY + btnH){
+          const id = items[i]; const it = shopItems[id];
+          console.log('SHOP: item button click', id, 'coins=', coinCount, 'cost=', it.cost);
+          if(it.level < it.maxLevel && coinCount >= it.cost){
+            coinCount -= it.cost; it.level++; it.apply();
+            // increase subsequent cost
+            it.cost = Math.max(1, Math.round(it.cost * 1.6));
+          } else {
+            // not enough coins or maxed - small shake feedback
+            shake = Math.max(shake, 6);
+          }
+          return;
+        }
+      }
+
+      // skin button area (click to buy or equip)
+      const skinAreaY = py + 40 + items.length*28 + 8;
+      const skinBoxX = px + 10, skinBoxY = skinAreaY, skinBoxW = panelW - 20, skinBoxH = 72;
+      const btnW = 64, btnH = 20; const btnX = skinBoxX + skinBoxW - btnW - 8, btnY = skinBoxY + Math.round((skinBoxH - btnH)/2);
+      if(mx >= btnX && mx <= btnX + btnW && my >= btnY && my <= btnY + btnH){
+        const skinInfo = shopSkins[0];
+        const owned = !!unlockedSkins[SKIN_CAPTAIN];
+        console.log('SHOP: skin button click', 'owned=', owned, 'equipped=', equippedSkin, 'coins=', coinCount);
+        if(!owned){
+          if(coinCount >= skinInfo.cost){
+            coinCount -= skinInfo.cost; unlockedSkins[SKIN_CAPTAIN] = true; saveSkins();
+            skinMsgText = 'Purchased: ' + skinInfo.name;
+            skinMsgTimer = 120; skinSwitchFlash = 10;
+          } else { shake = Math.max(shake, 6); }
+        } else {
+          // equip if owned and not already equipped
+          if(equippedSkin !== SKIN_CAPTAIN){
+            equippedSkin = SKIN_CAPTAIN; saveSkins();
+            skinMsgText = 'Equipped: ' + skinInfo.name;
+            skinMsgTimer = 120; skinSwitchFlash = 14;
+          }
+        }
+        return;
+      }
+
+      // click outside items closes shop
+      shopOpen = false;
+    } else {
+      canvas.focus();
+    }
+  });
+  // Allow clicking the canvas to start the game from the title screen (helps when DevTools steals keyboard focus)
+  canvas.addEventListener('click', (e)=>{
+    console.log('canvas.click fired, gameState=', gameState);
+    if(gameState === 'start'){
+      try{ ensureAudio(); }catch(err){ console.log('ensureAudio failed', err); }
+      console.log('calling startGame() from canvas click');
+      canvas.focus();
+      startGame();
+    }
+  });
+
+  // Pause (P) and Restart (R) keyboard controls
+  // start dodge function
+  function startDodge(){
+    if(paused || gameOver || shopOpen) return;
+    if(player.isDodging) return;
+    if(player.dodgeCooldown > 0) return;
+    // determine direction from input or fallback to lastMove or facing
+    let dx = 0, dy = 0;
+  // WASD direction input for dodge
+  if(keys['a']) dx = -1;
+  if(keys['d']) dx = 1;
+  if(keys['w']) dy = -1;
+  if(keys['s']) dy = 1;
+    if(dx === 0 && dy === 0){ dx = player.lastMoveX || (player.facing>0?1:-1); dy = player.lastMoveY || 0; }
+    // normalize diagonal
+    const m = Math.hypot(dx, dy) || 1;
+    dx = dx / m; dy = dy / m;
+    player.isDodging = true;
+    player.dodgeTimer = DODGE_DURATION;
+    player.dodgeVx = dx * DODGE_SPEED;
+    player.dodgeVy = dy * DODGE_SPEED;
+    // grant invulnerability during dodge window
+    player.invuln = DODGE_DURATION;
+    try{ playSound('attack'); }catch(e){}
+    // initial afterimage
+    dodgeTrail.push({ x: player.x, y: player.y, ttl: 10, alpha: 0.9 });
+  }
+
+  window.addEventListener('keydown', (e)=>{
+    const k = e.key.toLowerCase();
+    // Dodge on Space
+    if(e.code === 'Space'){
+      e.preventDefault();
+      startDodge();
+    }
+    // Start the game from the start screen
+    if(k === 'enter'){
+      if(gameState === 'start'){
+        ensureAudio();
+        startGame();
+      }
+    }
+    // Cycle skins with S (only unlocked skins)
+    if(k === 's'){
+      // only allow when cooldown elapsed
+      if(sCooldown <= 0){
+        // build ordered list of unlocked skins
+        const unlockedList = Object.keys(unlockedSkins).filter(k2 => unlockedSkins[k2]);
+        if(unlockedList.length > 1){
+          // find current index in list (use equippedSkin as source of truth)
+          let idx = unlockedList.indexOf(equippedSkin);
+          if(idx === -1) idx = 0;
+          // We no longer allow quick-cycling of the equipped skin via S.
+          // Inform the player to use the shop to change skins instead.
+          const next = unlockedList[(idx + 1) % unlockedList.length];
+          skinMsgText = 'Preview: ' + (next === SKIN_CAPTAIN ? 'Captain Panda (open shop to equip)' : 'Default (open shop to equip)');
+          skinMsgTimer = 120; // show guidance for 2s
+          // short cooldown to avoid spamming the message
+          sCooldown = 18;
+        }
+      }
+    }
+    if(k === 'p'){
+      paused = !paused;
+      // clear movement keys when pausing
+      if(paused){ for(const kk in keys) keys[kk]=false; }
+    }
+    if(k === 'r'){
+      if(gameOver) restartGame();
+    }
+    // ensure audio context created on first gesture
+  if(['p','r','f','j','w','a','s','d',' '].includes(k)) ensureAudio();
+  });
+
+  // Start the actual gameplay from the title screen
+  function startGame(){
+    // reset and begin playing
+    console.log('startGame() called');
+    restartGame();
+    gameState = 'playing';
+  }
+
+  // Draw the start/title screen (large bear, simple buildings, blinking prompt)
+  function drawStartScreen(){
+    // sky/ground
+    ctx.save();
+    ctx.fillStyle = '#071018'; ctx.fillRect(0,0,W,H);
+    // draw a few simple buildings (pixel blocks)
+    const baseY = H - 36;
+    ctx.fillStyle = '#0b1722'; ctx.fillRect(30, baseY - 40, 44, 40);
+    ctx.fillStyle = '#0f2430'; ctx.fillRect(90, baseY - 52, 34, 52);
+    ctx.fillStyle = '#0b1626'; ctx.fillRect(140, baseY - 36, 56, 36);
+    // windows (flicker)
+    ctx.fillStyle = '#123'; for(let bx of [34,98,144]){ for(let wy=baseY-32; wy<baseY-4; wy+=8){ if(Math.random() < 0.25) ctx.fillRect(bx, wy, 4,4); } }
+    // ground strip
+    ctx.fillStyle = '#051018'; ctx.fillRect(0, baseY, W, H-baseY);
+
+    // Title
+    drawCenteredText('SUPER BEAR', Math.round(W/2), 28, { font: '22px monospace', bg: true, color: '#ffd24a' });
+
+    // big bear: scale up the existing small bear drawing for charm
+    const scale = 2.0;
+    const bx = Math.round(W/2 - (player.w * scale) / 2);
+    const by = Math.round(H/2 - (player.h * scale) / 2) - 6 + Math.round(Math.sin(startFrame * 0.06) * 3);
+    ctx.translate(bx, by);
+    ctx.scale(scale, scale);
+    // slightly bob and nudge to create a waving feel
+    drawBear(0, 0 + Math.round(Math.sin(bearWavePhase) * 1), 1, false);
+    ctx.setTransform(1,0,0,1,0,0);
+
+    // speech bubble
+    const sx = Math.round(W/2 + 24);
+    const sy = Math.round(H/2 - 24 + speechBounce);
+    // bubble rectangle
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(sx, sy, 44, 16);
+    ctx.fillStyle = '#000000'; ctx.fillRect(sx+2, sy+2, 40, 12);
+    drawOutlinedText('HIIIII', sx + 22, sy + 8, { font: '10px monospace', align: 'center', baseline: 'middle', color: '#ffd24a' });
+
+    // blinking prompt
+    if(startBlink){ drawCenteredText('Press Enter to Start', Math.round(W/2), Math.round(H - 24), { font: '12px monospace', bg: false }); }
+
+    ctx.restore();
+  }
+
+  function restartGame(){
+    // reset core state
+    console.log('restartGame()');
+    player.baseSpeed = 1.7; player.speedBonus = 0; player.attackBonus = 0; player.maxHealth = 100; player.health = 100;
+    player.x = W/2 - 10; player.y = H/2 - 12; player.facing = 1; player.invuln = 0;
+    // reset shop
+    shopItems.attack.level = 0; shopItems.attack.cost = 5;
+    shopItems.speed.level = 0; shopItems.speed.cost = 8;
+    shopItems.health.level = 0; shopItems.health.cost = 10;
+    // clear world
+    enemies.length = 0; projectiles.length = 0; coins.length = 0; coinParticles.length = 0;
+    boss = null; bossMessageTimer = 0; bossIntroTimer = 0;
+    coinCount = 0; totalKills = 0; levelKills = 0; bossSpawnedForLevel = false; bossDefeatedForLevel = false; spawnTimer = 0; frame = 0;
+    // apply starting level settings
+    level = 1; applyLevelSettings(level);
+    shopOpen = false; paused = false; gameOver = false;
+    initBuildings(); spawnEnemy(); spawnEnemy();
+  }
+
+  // Apply settings for a given level (spawn interval, max enemies, UI text)
+  function applyLevelSettings(levelIndex){
+    const lvl = LEVELS[levelIndex] || LEVELS[1];
+    spawnInterval = Math.max(60, Math.round(lvl.spawnInterval));
+    // set maxEnemies scaled by level difficulty
+    maxEnemies = Math.min(18, 4 + Math.floor(levelIndex * 1.2));
+    levelMsgText = 'LEVEL ' + levelIndex + ': ' + (lvl.name || '');
+    levelMessageTimer = 140;
+    // reset per-level counters
+    levelKills = 0; bossSpawnedForLevel = false; bossDefeatedForLevel = false;
+    // small respawn pause so player has breathing room
+    enemies.length = 0; spawnTimer = -180;
+  }
+
+  // handle completing a level (rewards, celebration, advance to next level or victory)
+  function completeLevel(){
+    const cur = LEVELS[level] || LEVELS[1];
+    // award reward (but level 10 is handled separately)
+    if(level < 10){
+      coinCount += cur.rewardCoins || 0;
+      const heal = Math.min(cur.rewardHeal || 0, player.maxHealth - player.health);
+      if(heal > 0) player.health += heal;
+      // Prepare next level
+      const next = level + 1;
+      level = next;
+      applyLevelSettings(level);
+      // start a celebration for the new level (stronger as level grows)
+      startLevelCelebration(level);
+    } else {
+      // final completion -> show victory
+      // small reward and then show victory screen
+      coinCount += cur.rewardCoins || 0;
+      showVictoryScreen();
+    }
+  }
+
+  function showVictoryScreen(){
+    // stop gameplay and show final victory info
+    gameState = 'victory';
+    // prepare celebratory state
+    inCelebration = false; celebrationTimer = 0; confetti.length = 0;
+    // clear world and keep stats visible
+    enemies.length = 0; projectiles.length = 0; coins.length = 0;
+  }
+  }
+  }
+  </script>
+</body>
+</html>
