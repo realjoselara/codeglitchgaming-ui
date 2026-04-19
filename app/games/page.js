@@ -12,7 +12,7 @@ const GAMES = [
   },
   {
     slug: "super-bear-galaxy",
-    title: "Super Bear Galaxy",
+    title: "Bearverse",
     status: "New cabinet",
     description:
       "A separate 50-level space campaign with galaxy sectors, cosmic bosses, and a fresh arcade run.",
@@ -67,7 +67,7 @@ export default function GamesPage() {
                 Play Super Bear
               </Link>
               <Link className="games-link" href="/games/super-bear-galaxy">
-                Play Super Bear Galaxy
+                Play Bearverse
               </Link>
               <a
                 className="games-link"

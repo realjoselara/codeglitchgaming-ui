@@ -4,16 +4,16 @@ import "../games.css";
 const CONTROLS = [
   "WASD to move",
   "Mouse to aim",
-  "Left click to shoot",
+  "P to pew",
   "Right click to pulse slash",
   "Space to dodge",
   "B to open the cosmic shop",
 ];
 
 export const metadata = {
-  title: "Super Bear Galaxy | CodeGlitch Gaming",
+  title: "Bearverse | CodeGlitch Gaming",
   description:
-    "Play Super Bear Galaxy inside the CodeGlitch Gaming arcade.",
+    "Play Bearverse inside the CodeGlitch Gaming arcade.",
 };
 
 export default function SuperBearGalaxyPage() {
@@ -24,7 +24,7 @@ export default function SuperBearGalaxyPage() {
           <div className="games-title-row">
             <div>
               <p className="games-kicker">Arcade Cabinet</p>
-              <h1>Super Bear Galaxy</h1>
+              <h1>Bearverse</h1>
               <p className="games-subtitle">
                 A 50-level space run with nebula zones, orbital arenas, and
                 escalating alien waves.
@@ -56,7 +56,7 @@ export default function SuperBearGalaxyPage() {
               <iframe
                 className="games-frame"
                 src="/games/super-bear-galaxy/index.html"
-                title="Super Bear Galaxy game"
+                title="Bearverse game"
                 loading="lazy"
                 allow="autoplay"
               />

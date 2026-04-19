@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Super Bear Galaxy</title>
+  <title>Bearverse</title>
   <style>
     html, body {
       height: 100%;
@@ -60,7 +60,7 @@
 <body>
   <div class="game-wrap">
     <canvas id="game" width="1280" height="720"></canvas>
-    <div class="help">WASD move<br />Left click blaster<br />K pulse slash<br />Space dodge</div>
+    <div class="help">WASD move<br />P pew<br />K pulse slash<br />Space dodge</div>
   </div>
 
   <script>
@@ -333,11 +333,16 @@
       createSector();
     }
 
+    function restartCurrentLevel() {
+      run.victory = false;
+      createSector();
+    }
+
     function nextSector() {
       if (run.sectorIndex === TOTAL_LEVELS - 1) {
         state = "victory";
         run.victory = true;
-        setOverlay("Super Bear Galaxy cleared", 220);
+        setOverlay("Bearverse cleared", 220);
         return;
       }
       run.sectorIndex += 1;
@@ -875,7 +880,7 @@
       ctx.fillRect(18, 18, 430, 156);
       ctx.fillRect(W - 330, 18, 290, 122);
 
-      drawOutlinedText("Super Bear Galaxy", 34, 30, { font: "bold 26px Trebuchet MS", color: "#ffffff" });
+      drawOutlinedText("Bearverse", 34, 30, { font: "bold 26px Trebuchet MS", color: "#ffffff" });
       drawOutlinedText(
         "Level " + currentLevelNumber() + " • " + currentSector().name + (isHardMode() ? " • Hard Mode" : ""),
         34,
@@ -906,7 +911,7 @@
       if (state === "start") {
         ctx.fillStyle = "rgba(0,0,0,0.68)";
         ctx.fillRect(0, 0, W, H);
-        drawOutlinedText("Super Bear Galaxy", W / 2, H / 2 - 54, { font: "bold 60px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("Bearverse", W / 2, H / 2 - 54, { font: "bold 60px Trebuchet MS", align: "center", color: "#ffffff" });
         drawOutlinedText("Arcade space survival with the astronaut bear", W / 2, H / 2 + 10, { font: "24px Trebuchet MS", align: "center", color: "#92dcff" });
         drawOutlinedText("Press Enter to launch", W / 2, H / 2 + 52, { font: "bold 26px Trebuchet MS", align: "center", color: "#ffe176" });
       }
@@ -974,9 +979,11 @@
       keys[key] = true;
 
       if (state === "start" && event.key === "Enter") createSector();
-      if ((state === "gameover" || state === "victory") && key === "r") restartRun();
+      if (state === "gameover" && key === "r") restartCurrentLevel();
+      if (state === "victory" && key === "r") restartRun();
       if (state !== "playing") return;
 
+      if (key === "p") fireShot();
       if (key === "j") fireShot();
       if (key === "k") pulseSlash();
       if (event.code === "Space") {
@@ -987,11 +994,6 @@
 
     window.addEventListener("keyup", (event) => {
       keys[event.key.toLowerCase()] = false;
-    });
-
-    canvas.addEventListener("mousedown", (event) => {
-      if (event.button !== 0) return;
-      if (state === "playing") fireShot();
     });
 
     loadPlayerSheet()
