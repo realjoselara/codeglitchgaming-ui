@@ -11,7 +11,7 @@ const GAMES = [
     highlights: ["10 levels", "Boss fights", "Shop upgrades"],
   },
   {
-    slug: "super-bear-galaxy",
+    slug: "bearverse",
     title: "Bearverse",
     status: "New cabinet",
     description:
@@ -66,7 +66,7 @@ export default function GamesPage() {
               <Link className="games-link games-link-primary" href="/games/super-bear">
                 Play Super Bear
               </Link>
-              <Link className="games-link" href="/games/super-bear-galaxy">
+              <Link className="games-link" href="/games/bearverse">
                 Play Bearverse
               </Link>
               <a

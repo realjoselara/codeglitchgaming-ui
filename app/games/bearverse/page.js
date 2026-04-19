@@ -40,7 +40,7 @@ export default function SuperBearGalaxyPage() {
               </Link>
               <a
                 className="games-link"
-                href="/games/super-bear-galaxy/index.html"
+                href="/games/bearverse/index.html"
                 target="_blank"
                 rel="noreferrer"
               >
@@ -55,7 +55,7 @@ export default function SuperBearGalaxyPage() {
             <div className="games-frame-wrap">
               <iframe
                 className="games-frame"
-                src="/games/super-bear-galaxy/index.html"
+                src="/games/bearverse/index.html"
                 title="Bearverse game"
                 loading="lazy"
                 allow="autoplay"
@@ -86,7 +86,7 @@ export default function SuperBearGalaxyPage() {
           <aside className="games-info-card">
             <p className="games-panel-label">Project Layout</p>
             <p className="games-copy">
-              This title lives at <code>/games/super-bear-galaxy</code> and the
+              This title lives at <code>/games/bearverse</code> and the
               original <code>/games/super-bear</code> stays untouched as its own
               separate cabinet.
             </p>

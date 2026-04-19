@@ -226,12 +226,12 @@
 
     function loadPlayerSheet() {
       const spriteUrls = window.location.protocol === "file:"
-        ? [
+          ? [
             new URL("./assets/astronaut-bear-sheet.png", window.location.href).href,
             new URL("assets/astronaut-bear-sheet.png", window.location.href).href,
           ]
-        : [
-            new URL("/games/super-bear-galaxy/assets/astronaut-bear-sheet.png", window.location.origin).href,
+          : [
+            new URL("/games/bearverse/assets/astronaut-bear-sheet.png", window.location.origin).href,
             new URL("./assets/astronaut-bear-sheet.png", window.location.href).href,
           ];
 
