@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Super Bear: Neon Rescue</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #050713;
+      color: #f6fbff;
+      font-family: "Trebuchet MS", system-ui, sans-serif;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    .game-shell {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      padding: 10px;
+      box-sizing: border-box;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 12% 14%, rgba(0, 232, 255, 0.18), transparent 28%),
+        radial-gradient(circle at 86% 16%, rgba(255, 67, 154, 0.18), transparent 24%),
+        linear-gradient(180deg, #050713, #0b1226);
+    }
+
+    canvas {
+      display: block;
+      width: min(calc(100vw - 20px), calc((100vh - 20px) * 16 / 9));
+      height: min(calc(100vh - 20px), calc((100vw - 20px) * 9 / 16));
+      border: 6px solid #050813;
+      border-radius: 18px;
+      background: #080c1c;
+      box-shadow: 0 20px 70px rgba(0, 0, 0, 0.46);
+      image-rendering: pixelated;
+    }
+
+    .help {
+      position: absolute;
+      right: max(28px, calc((100vw - min(calc(100vw - 20px), calc((100vh - 20px) * 16 / 9))) / 2 + 28px));
+      bottom: max(22px, calc((100vh - min(calc(100vh - 20px), calc((100vw - 20px) * 9 / 16))) / 2 + 22px));
+      max-width: 300px;
+      padding: 9px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      background: rgba(5, 8, 19, 0.7);
+      color: #d9f8ff;
+      font-size: 12px;
+      line-height: 1.45;
+      text-align: right;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-shell">
+    <canvas id="game" width="1280" height="720"></canvas>
+    <div class="help">Move: A/D or arrows &nbsp; Jump/wall jump: W/Up/Space<br />Punch: J &nbsp; Hold K: Bear Blast &nbsp; Suit: E &nbsp; Restart: R</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width;
+    const H = canvas.height;
+    const GROUND_Y = 638;
+    const keys = Object.create(null);
+
+    let frame = 0;
+    let cameraX = 0;
+    let state = "start";
+    let levelIndex = 0;
+    let overlayText = "";
+    let overlayTimer = 0;
+    let gameComplete = false;
+
+    const superBearSprite = new Image();
+    superBearSprite.src = "./assets/super-bear-reference-sheet.png";
+    const superBearFrame = {
+      width: 220,
+      height: 260,
+    };
+
+    const levels = [
+      {
+        name: "Candy Factory",
+        subtitle: "Rescue the gummy gears and dodge syrup bots.",
+        palette: { sky1: "#2b1031", sky2: "#0b1430", accent: "#ff5fb7", glow: "#ffe66d", ground: "#361943", brick: "#7c2b72" },
+        length: 3100,
+        suit: "Sugar Rush",
+        suitColor: "#ff8bd8",
+        hazards: [{ x: 1260, y: 608, w: 260, h: 30 }, { x: 2290, y: 608, w: 220, h: 30 }],
+        platforms: [
+          { x: 330, y: 526, w: 250, h: 22 }, { x: 720, y: 442, w: 220, h: 22 }, { x: 1070, y: 356, w: 180, h: 22 },
+          { x: 1510, y: 496, w: 280, h: 22 }, { x: 1900, y: 410, w: 220, h: 22 }, { x: 2320, y: 330, w: 260, h: 22 }
+        ],
+        enemies: [
+          { x: 620, y: 580, kind: "toy" }, { x: 1120, y: 300, kind: "toy" }, { x: 1680, y: 448, kind: "bot" },
+          { x: 2040, y: 362, kind: "toy" }, { x: 2600, y: 580, kind: "bot" }
+        ],
+        cores: [{ x: 760, y: 390 }, { x: 1950, y: 360 }, { x: 2440, y: 282 }]
+      },
+      {
+        name: "Cyber Sewers",
+        subtitle: "Climb the drain walls and purge the slime signal.",
+        palette: { sky1: "#062a35", sky2: "#081527", accent: "#20e5ff", glow: "#5dff9c", ground: "#0c3438", brick: "#175d63" },
+        length: 3400,
+        suit: "Volt Waders",
+        suitColor: "#5dff9c",
+        hazards: [{ x: 980, y: 608, w: 360, h: 30 }, { x: 2080, y: 608, w: 320, h: 30 }],
+        platforms: [
+          { x: 360, y: 508, w: 190, h: 22 }, { x: 690, y: 420, w: 170, h: 22 }, { x: 980, y: 330, w: 170, h: 22 },
+          { x: 1420, y: 500, w: 210, h: 22 }, { x: 1770, y: 410, w: 180, h: 22 }, { x: 2440, y: 350, w: 190, h: 22 },
+          { x: 2800, y: 468, w: 240, h: 22 }
+        ],
+        enemies: [
+          { x: 520, y: 460, kind: "bot" }, { x: 1010, y: 282, kind: "arcade" }, { x: 1560, y: 452, kind: "bot" },
+          { x: 2210, y: 580, kind: "toy" }, { x: 2880, y: 420, kind: "arcade" }
+        ],
+        cores: [{ x: 1020, y: 282 }, { x: 1840, y: 360 }, { x: 2880, y: 420 }]
+      },
+      {
+        name: "Arcade Highway",
+        subtitle: "Sprint across cabinet signs and reboot the road.",
+        palette: { sky1: "#16103c", sky2: "#090b22", accent: "#ffcf4d", glow: "#ff4bd8", ground: "#252053", brick: "#5e3ed3" },
+        length: 3700,
+        suit: "Pixel Turbo",
+        suitColor: "#ffcf4d",
+        hazards: [{ x: 1320, y: 608, w: 280, h: 30 }, { x: 2580, y: 608, w: 340, h: 30 }],
+        platforms: [
+          { x: 350, y: 470, w: 240, h: 22 }, { x: 760, y: 390, w: 220, h: 22 }, { x: 1180, y: 470, w: 190, h: 22 },
+          { x: 1640, y: 388, w: 240, h: 22 }, { x: 2060, y: 308, w: 190, h: 22 }, { x: 2520, y: 430, w: 220, h: 22 },
+          { x: 3040, y: 342, w: 250, h: 22 }
+        ],
+        enemies: [
+          { x: 460, y: 422, kind: "arcade" }, { x: 900, y: 342, kind: "arcade" }, { x: 1760, y: 340, kind: "bot" },
+          { x: 2120, y: 260, kind: "arcade" }, { x: 3180, y: 294, kind: "bot" }
+        ],
+        cores: [{ x: 840, y: 338 }, { x: 2100, y: 260 }, { x: 3150, y: 294 }]
+      },
+      {
+        name: "Moon Base",
+        subtitle: "Low-gravity jumps, final virus core, full color restore.",
+        palette: { sky1: "#111733", sky2: "#050713", accent: "#bba6ff", glow: "#79f2ff", ground: "#20294d", brick: "#505b94" },
+        length: 3900,
+        suit: "Lunar Armor",
+        suitColor: "#bba6ff",
+        hazards: [{ x: 1080, y: 608, w: 260, h: 30 }, { x: 2220, y: 608, w: 280, h: 30 }, { x: 3040, y: 608, w: 300, h: 30 }],
+        platforms: [
+          { x: 360, y: 500, w: 220, h: 22 }, { x: 760, y: 406, w: 200, h: 22 }, { x: 1360, y: 482, w: 190, h: 22 },
+          { x: 1740, y: 378, w: 220, h: 22 }, { x: 2140, y: 286, w: 190, h: 22 }, { x: 2560, y: 398, w: 240, h: 22 },
+          { x: 3400, y: 430, w: 260, h: 22 }
+        ],
+        enemies: [
+          { x: 500, y: 452, kind: "bot" }, { x: 880, y: 358, kind: "toy" }, { x: 1460, y: 434, kind: "arcade" },
+          { x: 2200, y: 238, kind: "bot" }, { x: 2680, y: 350, kind: "toy" }, { x: 3500, y: 382, kind: "core" }
+        ],
+        cores: [{ x: 820, y: 356 }, { x: 2200, y: 238 }, { x: 3500, y: 382 }]
+      }
+    ];
+
+    const player = {
+      x: 88,
+      y: 470,
+      w: 44,
+      h: 58,
+      vx: 0,
+      vy: 0,
+      facing: 1,
+      grounded: false,
+      wallDir: 0,
+      hp: 100,
+      maxHp: 100,
+      cores: 0,
+      combo: 0,
+      comboTimer: 0,
+      punchTimer: 0,
+      invuln: 0,
+      blastCharge: 0,
+      blastCooldown: 0,
+      suitTimer: 0,
+      suitCharges: 2
+    };
+
+    let platforms = [];
+    let hazards = [];
+    let enemies = [];
+    let cores = [];
+    let blasts = [];
+    let particles = [];
+
+    function level() {
+      return levels[levelIndex];
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function setOverlay(text, timer = 150) {
+      overlayText = text;
+      overlayTimer = timer;
+    }
+
+    function makeParticles(x, y, color, count = 14) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 7,
+          vy: -Math.random() * 5 - 1,
+          life: 22 + Math.random() * 18,
+          color
+        });
+      }
+    }
+
+    function loadLevel(index) {
+      levelIndex = index;
+      const data = level();
+      platforms = [
+        { x: -120, y: GROUND_Y, w: data.length + 320, h: 90, ground: true },
+        ...data.platforms
+      ];
+      hazards = data.hazards.map((h) => ({ ...h }));
+      enemies = data.enemies.map((enemy) => ({
+        ...enemy,
+        w: enemy.kind === "core" ? 68 : 48,
+        h: enemy.kind === "core" ? 76 : 48,
+        hp: enemy.kind === "core" ? 90 : 36,
+        maxHp: enemy.kind === "core" ? 90 : 36,
+        vx: enemy.kind === "arcade" ? 1.1 : 0.7,
+        startX: enemy.x,
+        hurt: 0,
+        defeated: false
+      }));
+      cores = data.cores.map((core) => ({ ...core, w: 24, h: 24, taken: false }));
+      blasts = [];
+      particles = [];
+      player.x = 88;
+      player.y = 470;
+      player.vx = 0;
+      player.vy = 0;
+      player.facing = 1;
+      player.grounded = false;
+      player.wallDir = 0;
+      player.hp = Math.min(player.maxHp, player.hp + 28);
+      player.blastCharge = 0;
+      player.blastCooldown = 0;
+      player.suitTimer = 0;
+      player.suitCharges = 2;
+      cameraX = 0;
+      state = "playing";
+      setOverlay(data.name + ": " + data.subtitle, 180);
+    }
+
+    function restartGame() {
+      player.hp = player.maxHp;
+      player.cores = 0;
+      player.combo = 0;
+      player.comboTimer = 0;
+      gameComplete = false;
+      loadLevel(0);
+    }
+
+    function hurtPlayer(amount) {
+      if (player.invuln > 0 || state !== "playing") return;
+      const reduction = player.suitTimer > 0 ? 0.55 : 1;
+      player.hp = Math.max(0, player.hp - Math.round(amount * reduction));
+      player.invuln = 70;
+      player.vx = -player.facing * 7;
+      player.vy = -7;
+      makeParticles(player.x + player.w / 2, player.y + player.h / 2, "#ff4d6d", 16);
+      if (player.hp <= 0) {
+        state = "gameover";
+        setOverlay("Bear City lost color. Press R to retry.", 9999);
+      }
+    }
+
+    function jump() {
+      if (player.grounded) {
+        player.vy = player.suitTimer > 0 && level().name === "Moon Base" ? -15.2 : -13.4;
+        player.grounded = false;
+        makeParticles(player.x + player.w / 2, player.y + player.h, "#dffbff", 8);
+      } else if (player.wallDir !== 0) {
+        player.vy = -12.8;
+        player.vx = -player.wallDir * 9.4;
+        player.facing = -player.wallDir;
+        player.wallDir = 0;
+        makeParticles(player.x + player.w / 2, player.y + player.h / 2, level().palette.glow, 12);
+      }
+    }
+
+    function punch() {
+      if (player.punchTimer > 0) return;
+      player.combo = player.comboTimer > 0 ? (player.combo % 3) + 1 : 1;
+      player.comboTimer = 42;
+      player.punchTimer = 16;
+      const reach = player.combo === 3 ? 88 : 68;
+      const hit = {
+        x: player.facing > 0 ? player.x + player.w - 6 : player.x - reach + 6,
+        y: player.y + 12,
+        w: reach,
+        h: 42
+      };
+      enemies.forEach((enemy) => {
+        if (enemy.defeated) return;
+        if (rectsOverlap(hit, enemy)) {
+          const damage = player.combo === 3 ? 28 : 18;
+          enemy.hp -= damage;
+          enemy.hurt = 12;
+          enemy.vx = player.facing * 4.5;
+          makeParticles(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, level().palette.glow, 18);
+          if (enemy.hp <= 0) defeatEnemy(enemy);
+        }
+      });
+    }
+
+    function releaseBlast() {
+      if (player.blastCooldown > 0 || player.blastCharge < 22) {
+        player.blastCharge = 0;
+        return;
+      }
+      const charged = clamp(player.blastCharge / 72, 0.4, 1.4);
+      blasts.push({
+        x: player.facing > 0 ? player.x + player.w : player.x - 20,
+        y: player.y + 25,
+        w: 28 + 36 * charged,
+        h: 18 + 18 * charged,
+        vx: player.facing * (12 + charged * 3),
+        damage: 30 + Math.round(charged * 32),
+        life: 80,
+        color: player.suitTimer > 0 ? level().suitColor : "#7df3ff"
+      });
+      player.blastCooldown = 44;
+      player.blastCharge = 0;
+      makeParticles(player.x + player.w / 2, player.y + 28, "#7df3ff", 10);
+    }
+
+    function activateSuit() {
+      if (player.suitCharges <= 0 || player.suitTimer > 0) return;
+      player.suitCharges -= 1;
+      player.suitTimer = 520;
+      setOverlay(level().suit + " activated", 95);
+      makeParticles(player.x + player.w / 2, player.y + player.h / 2, level().suitColor, 30);
+    }
+
+    function defeatEnemy(enemy) {
+      enemy.defeated = true;
+      player.cores += enemy.kind === "core" ? 3 : 1;
+      makeParticles(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, level().palette.accent, 28);
+    }
+
+    function moveAndCollide() {
+      const data = level();
+      const accel = player.suitTimer > 0 ? 0.78 : 0.62;
+      const maxSpeed = player.suitTimer > 0 ? 8.2 : 6.2;
+      const gravity = data.name === "Moon Base" ? 0.48 : 0.72;
+      const friction = player.grounded ? 0.78 : 0.94;
+      let intent = 0;
+      if (keys.a || keys.arrowleft) intent -= 1;
+      if (keys.d || keys.arrowright) intent += 1;
+      if (intent !== 0) player.facing = intent;
+      player.vx += intent * accel;
+      player.vx *= friction;
+      player.vx = clamp(player.vx, -maxSpeed, maxSpeed);
+      player.vy += gravity;
+      player.vy = clamp(player.vy, -24, 18);
+
+      player.x += player.vx;
+      player.wallDir = 0;
+      platforms.forEach((platform) => {
+        if (!rectsOverlap(player, platform)) return;
+        if (player.vx > 0) {
+          player.x = platform.x - player.w;
+          player.wallDir = 1;
+        } else if (player.vx < 0) {
+          player.x = platform.x + platform.w;
+          player.wallDir = -1;
+        }
+        player.vx = 0;
+      });
+
+      player.y += player.vy;
+      player.grounded = false;
+      platforms.forEach((platform) => {
+        if (!rectsOverlap(player, platform)) return;
+        if (player.vy > 0) {
+          player.y = platform.y - player.h;
+          player.vy = 0;
+          player.grounded = true;
+        } else if (player.vy < 0) {
+          player.y = platform.y + platform.h;
+          player.vy = 0;
+        }
+      });
+
+      player.x = clamp(player.x, 0, data.length - player.w);
+      if (player.y > H + 120) hurtPlayer(999);
+    }
+
+    function updateEnemies() {
+      enemies.forEach((enemy) => {
+        if (enemy.defeated) return;
+        if (enemy.hurt > 0) enemy.hurt -= 1;
+        const center = enemy.x + enemy.w / 2;
+        const playerCenter = player.x + player.w / 2;
+        const chase = Math.abs(playerCenter - center) < 460;
+        const dir = chase ? Math.sign(playerCenter - center) || 1 : Math.sign(enemy.vx) || 1;
+        enemy.vx += dir * (enemy.kind === "core" ? 0.08 : 0.04);
+        enemy.vx = clamp(enemy.vx, -2.8, 2.8);
+        enemy.x += enemy.vx;
+        enemy.y += 0.7;
+        platforms.forEach((platform) => {
+          if (!rectsOverlap(enemy, platform)) return;
+          if (enemy.y + enemy.h - 0.7 <= platform.y + 8) {
+            enemy.y = platform.y - enemy.h;
+          } else {
+            enemy.vx *= -1;
+          }
+        });
+        if (Math.abs(enemy.x - enemy.startX) > 220 && !chase) enemy.vx *= -1;
+        if (rectsOverlap(player, enemy)) hurtPlayer(enemy.kind === "core" ? 22 : 13);
+      });
+    }
+
+    function updateBlasts() {
+      blasts.forEach((blast) => {
+        blast.x += blast.vx;
+        blast.life -= 1;
+        enemies.forEach((enemy) => {
+          if (enemy.defeated || blast.life <= 0) return;
+          if (rectsOverlap(blast, enemy)) {
+            enemy.hp -= blast.damage;
+            enemy.hurt = 10;
+            blast.life = 0;
+            makeParticles(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, blast.color, 22);
+            if (enemy.hp <= 0) defeatEnemy(enemy);
+          }
+        });
+      });
+      blasts = blasts.filter((blast) => blast.life > 0);
+    }
+
+    function updateCollectibles() {
+      cores.forEach((core) => {
+        if (core.taken) return;
+        const box = { x: core.x - 12, y: core.y - 12, w: core.w, h: core.h };
+        if (rectsOverlap(player, box)) {
+          core.taken = true;
+          player.cores += 2;
+          player.hp = Math.min(player.maxHp, player.hp + 10);
+          makeParticles(core.x, core.y, level().palette.glow, 18);
+        }
+      });
+    }
+
+    function update() {
+      frame += 1;
+      if (overlayTimer > 0) overlayTimer -= 1;
+      if (state !== "playing") return;
+
+      if ((keys.w || keys.arrowup || keys[" "]) && !keys.jumpLock) {
+        keys.jumpLock = true;
+        jump();
+      }
+      if (!(keys.w || keys.arrowup || keys[" "])) keys.jumpLock = false;
+      if ((keys.j || keys.z) && !keys.punchLock) {
+        keys.punchLock = true;
+        punch();
+      }
+      if (!(keys.j || keys.z)) keys.punchLock = false;
+      if ((keys.e || keys.shift) && !keys.suitLock) {
+        keys.suitLock = true;
+        activateSuit();
+      }
+      if (!(keys.e || keys.shift)) keys.suitLock = false;
+      if (keys.k || keys.x) {
+        player.blastCharge = Math.min(90, player.blastCharge + 1);
+      } else if (player.blastCharge > 0) {
+        releaseBlast();
+      }
+
+      moveAndCollide();
+      updateEnemies();
+      updateBlasts();
+      updateCollectibles();
+
+      hazards.forEach((hazard) => {
+        if (rectsOverlap(player, hazard)) hurtPlayer(18);
+      });
+
+      if (player.comboTimer > 0) player.comboTimer -= 1;
+      if (player.punchTimer > 0) player.punchTimer -= 1;
+      if (player.invuln > 0) player.invuln -= 1;
+      if (player.blastCooldown > 0) player.blastCooldown -= 1;
+      if (player.suitTimer > 0) player.suitTimer -= 1;
+
+      particles.forEach((p) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.25;
+        p.life -= 1;
+      });
+      particles = particles.filter((p) => p.life > 0);
+
+      const portal = { x: level().length - 150, y: 500, w: 74, h: 138 };
+      const allEnemiesDefeated = enemies.every((enemy) => enemy.defeated);
+      if (allEnemiesDefeated && rectsOverlap(player, portal)) {
+        if (levelIndex === levels.length - 1) {
+          state = "victory";
+          gameComplete = true;
+          setOverlay("Bear City is back online. Press R to play again.", 9999);
+        } else {
+          loadLevel(levelIndex + 1);
+        }
+      }
+
+      cameraX = clamp(player.x - 420, 0, level().length - W);
+    }
+
+    function drawText(text, x, y, opts = {}) {
+      ctx.font = opts.font || "20px Trebuchet MS";
+      ctx.textAlign = opts.align || "left";
+      ctx.textBaseline = opts.baseline || "top";
+      ctx.fillStyle = "rgba(0,0,0,0.72)";
+      ctx.fillText(text, x + 2, y + 2);
+      ctx.fillStyle = opts.color || "#ffffff";
+      ctx.fillText(text, x, y);
+    }
+
+    function drawBackground() {
+      const p = level().palette;
+      const gradient = ctx.createLinearGradient(0, 0, 0, H);
+      gradient.addColorStop(0, p.sky1);
+      gradient.addColorStop(0.52, p.sky2);
+      gradient.addColorStop(1, "#050713");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.save();
+      ctx.translate(-cameraX * 0.18, 0);
+      for (let i = 0; i < 42; i++) {
+        const x = (i * 117) % (level().length + 300);
+        const y = 54 + (i * 47) % 230;
+        ctx.fillStyle = i % 3 === 0 ? p.glow : "rgba(255,255,255,0.75)";
+        ctx.fillRect(x, y, 4, 4);
+      }
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(-cameraX * 0.45, 0);
+      for (let i = 0; i < 22; i++) {
+        const x = i * 210 - 80;
+        const h = 160 + (i % 5) * 38;
+        ctx.fillStyle = i % 2 ? "rgba(12,20,46,0.82)" : "rgba(18,28,62,0.82)";
+        ctx.fillRect(x, GROUND_Y - h, 126, h);
+        ctx.fillStyle = p.accent;
+        for (let r = 0; r < 5; r++) {
+          ctx.globalAlpha = 0.3 + ((frame + i + r) % 40 < 8 ? 0.35 : 0);
+          ctx.fillRect(x + 18 + (r % 2) * 44, GROUND_Y - h + 24 + r * 28, 18, 8);
+        }
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    }
+
+    function drawWorld() {
+      const p = level().palette;
+      ctx.save();
+      ctx.translate(-cameraX, 0);
+
+      hazards.forEach((hazard) => {
+        ctx.fillStyle = "#1b0614";
+        ctx.fillRect(hazard.x, hazard.y, hazard.w, hazard.h);
+        ctx.fillStyle = p.accent;
+        for (let x = hazard.x; x < hazard.x + hazard.w; x += 28) {
+          ctx.beginPath();
+          ctx.moveTo(x, hazard.y + hazard.h);
+          ctx.lineTo(x + 14, hazard.y + 2);
+          ctx.lineTo(x + 28, hazard.y + hazard.h);
+          ctx.fill();
+        }
+      });
+
+      platforms.forEach((platform) => {
+        ctx.fillStyle = platform.ground ? p.ground : p.brick;
+        ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
+        ctx.fillStyle = p.accent;
+        ctx.fillRect(platform.x, platform.y, platform.w, 4);
+        ctx.fillStyle = "rgba(255,255,255,0.11)";
+        for (let x = platform.x + 10; x < platform.x + platform.w; x += 42) {
+          ctx.fillRect(x, platform.y + 9, 22, 3);
+        }
+      });
+
+      const portalX = level().length - 150;
+      const defeated = enemies.every((enemy) => enemy.defeated);
+      ctx.strokeStyle = defeated ? p.glow : "rgba(255,255,255,0.25)";
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.ellipse(portalX + 38, 568, 36, 66, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.fillStyle = defeated ? "rgba(125,243,255,0.18)" : "rgba(255,255,255,0.06)";
+      ctx.fillRect(portalX + 8, 506, 60, 124);
+
+      cores.forEach((core, index) => {
+        if (core.taken) return;
+        const bob = Math.sin((frame + index * 16) * 0.07) * 5;
+        ctx.fillStyle = p.glow;
+        ctx.fillRect(core.x - 10, core.y - 10 + bob, 20, 20);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(core.x - 4, core.y - 4 + bob, 8, 8);
+      });
+
+      blasts.forEach((blast) => {
+        ctx.fillStyle = blast.color;
+        ctx.fillRect(blast.x, blast.y, blast.w, blast.h);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(blast.x + 6, blast.y + 5, Math.max(8, blast.w - 16), 4);
+      });
+
+      enemies.forEach(drawEnemy);
+      drawPlayer();
+
+      particles.forEach((particle) => {
+        ctx.globalAlpha = Math.max(0, particle.life / 34);
+        ctx.fillStyle = particle.color;
+        ctx.fillRect(particle.x, particle.y, 6, 6);
+        ctx.globalAlpha = 1;
+      });
+
+      ctx.restore();
+    }
+
+    function drawEnemy(enemy) {
+      if (enemy.defeated) return;
+      const flicker = enemy.hurt > 0 && frame % 4 < 2;
+      const kindColor = {
+        toy: "#c9c9cf",
+        bot: "#9bb8c7",
+        arcade: "#bd9dff",
+        core: "#ff4d88"
+      }[enemy.kind];
+      ctx.fillStyle = flicker ? "#ffffff" : kindColor;
+      ctx.fillRect(enemy.x, enemy.y + 10, enemy.w, enemy.h - 10);
+      ctx.fillStyle = "#16161c";
+      ctx.fillRect(enemy.x + 8, enemy.y, enemy.w - 16, 18);
+      ctx.fillStyle = "#ff315f";
+      ctx.fillRect(enemy.x + 12, enemy.y + 18, 8, 8);
+      ctx.fillRect(enemy.x + enemy.w - 20, enemy.y + 18, 8, 8);
+      if (enemy.kind === "arcade") {
+        ctx.fillStyle = "#2d164d";
+        ctx.fillRect(enemy.x + 8, enemy.y + 30, enemy.w - 16, 16);
+        ctx.fillStyle = "#60f7ff";
+        ctx.fillRect(enemy.x + 14, enemy.y + 35, enemy.w - 28, 6);
+      }
+      if (enemy.kind === "core") {
+        ctx.strokeStyle = level().palette.glow;
+        ctx.lineWidth = 4;
+        ctx.strokeRect(enemy.x - 5, enemy.y - 5, enemy.w + 10, enemy.h + 10);
+        ctx.lineWidth = 1;
+      }
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(enemy.x - 2, enemy.y - 14, enemy.w + 4, 7);
+      ctx.fillStyle = "#ff6688";
+      ctx.fillRect(enemy.x - 1, enemy.y - 13, (enemy.w + 2) * Math.max(0, enemy.hp / enemy.maxHp), 5);
+    }
+
+    function drawPlayer() {
+      const x = player.x;
+      const y = player.y;
+      const alpha = player.invuln > 0 && frame % 6 < 3 ? 0.45 : 1;
+      const footY = y + player.h + 2;
+      const sx = x + player.w / 2 - 36;
+      const sy = footY - 82;
+      const step = player.grounded ? Math.sin(frame * 0.22) : 0;
+      const runPose = Math.abs(player.vx) > 0.8 ? step : 0;
+      const punchPose = player.punchTimer > 0;
+      const chargePose = player.blastCharge > 0;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      if (player.facing < 0) {
+        ctx.translate(x + player.w / 2, 0);
+        ctx.scale(-1, 1);
+        ctx.translate(-(x + player.w / 2), 0);
+      }
+
+      ctx.imageSmoothingEnabled = false;
+
+      if (superBearSprite.complete && superBearSprite.naturalWidth > 0) {
+        const spriteFrame =
+          punchPose ? 2 : !player.grounded ? 3 : Math.abs(player.vx) > 0.8 && frame % 22 < 11 ? 1 : 0;
+        const drawW = 126;
+        const drawH = 149;
+        const drawX = x + player.w / 2 - drawW / 2;
+        const drawY = footY - drawH + 5;
+
+        if (player.suitTimer > 0) {
+          ctx.fillStyle = level().suitColor;
+          ctx.globalAlpha = alpha * 0.22;
+          ctx.fillRect(drawX + 8, drawY + 6, drawW - 16, drawH - 10);
+          ctx.globalAlpha = alpha;
+        }
+
+        if (chargePose) {
+          const pulse = 33 + player.blastCharge * 0.15 + Math.sin(frame * 0.3) * 2;
+          ctx.strokeStyle = "#7df3ff";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(x + player.w / 2 + 40, y + 33, pulse, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.lineWidth = 1;
+        }
+
+        ctx.drawImage(
+          superBearSprite,
+          spriteFrame * superBearFrame.width,
+          0,
+          superBearFrame.width,
+          superBearFrame.height,
+          drawX,
+          drawY,
+          drawW,
+          drawH
+        );
+        ctx.restore();
+        return;
+      }
+
+      for (let i = 0; i < 5; i++) {
+        const trailX = sx - 10 - i * 8 - Math.max(0, player.vx) * 2;
+        const trailY = sy + 18 + i * 9 + Math.sin((frame + i * 9) * 0.3) * 2;
+        ctx.fillStyle = i % 2 ? "rgba(255, 43, 83, 0.45)" : "rgba(0, 224, 255, 0.55)";
+        ctx.fillRect(trailX, trailY, 16 - i * 2, 4);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
+        ctx.fillRect(trailX + 5, trailY + 5, 18 - i * 2, 3);
+      }
+
+      if (player.suitTimer > 0) {
+        ctx.fillStyle = level().suitColor;
+        ctx.fillRect(sx - 5, sy - 5, 82, 92);
+        ctx.fillStyle = "rgba(255,255,255,0.42)";
+        ctx.fillRect(sx + 4, sy + 3, 64, 5);
+      }
+
+      ctx.fillStyle = "rgba(0,0,0,0.78)";
+      ctx.fillRect(sx + 6, sy + 6, 56, 44);
+      ctx.fillRect(sx + 13, sy + 45, 42, 36);
+      ctx.fillRect(sx + 1, sy + 33, 13, 24);
+      ctx.fillRect(sx + 55, sy + 31, 18, 26);
+      ctx.fillRect(sx + 11 + runPose * 4, sy + 72, 18, 13);
+      ctx.fillRect(sx + 42 - runPose * 4, sy + 72, 18, 13);
+
+      ctx.fillStyle = "#ffbf14";
+      ctx.fillRect(sx + 14, sy + 2, 18, 18);
+      ctx.fillRect(sx + 43, sy + 2, 18, 18);
+      ctx.fillRect(sx + 10, sy + 12, 54, 32);
+      ctx.fillRect(sx + 16, sy + 5, 42, 10);
+      ctx.fillStyle = "#ffd64a";
+      ctx.fillRect(sx + 17, sy + 10, 38, 8);
+      ctx.fillRect(sx + 15, sy + 33, 42, 9);
+
+      ctx.fillStyle = "#ff261b";
+      ctx.fillRect(sx + 12, sy + 21, 49, 16);
+      ctx.fillRect(sx + 21, sy + 17, 28, 7);
+      ctx.fillStyle = "#11121a";
+      ctx.fillRect(sx + 22, sy + 25, 10, 12);
+      ctx.fillRect(sx + 43, sy + 25, 10, 12);
+      ctx.fillRect(sx + 30, sy + 39, 15, 4);
+      ctx.fillStyle = "#fff08a";
+      ctx.fillRect(sx + 33, sy + 38, 8, 3);
+
+      ctx.fillStyle = "#ff2f18";
+      ctx.fillRect(sx + 16, sy + 43, 42, 34);
+      ctx.fillRect(sx + 12, sy + 48, 52, 17);
+      ctx.fillStyle = "#ff5a18";
+      ctx.fillRect(sx + 22, sy + 45, 26, 7);
+      ctx.fillStyle = "#ffd329";
+      ctx.fillRect(sx + 34, sy + 50, 14, 6);
+      ctx.fillRect(sx + 28, sy + 56, 17, 6);
+      ctx.fillRect(sx + 26, sy + 62, 14, 6);
+      ctx.fillRect(sx + 31, sy + 68, 17, 6);
+
+      ctx.fillStyle = "#11121a";
+      ctx.fillRect(sx + 14, sy + 76, 18, 7);
+      ctx.fillRect(sx + 43, sy + 76, 18, 7);
+      ctx.fillStyle = "#77e9ff";
+      ctx.fillRect(sx + 11 + runPose * 4, sy + 71, 19, 10);
+      ctx.fillRect(sx + 42 - runPose * 4, sy + 71, 20, 10);
+      ctx.fillStyle = "#b4f9ff";
+      ctx.fillRect(sx + 15 + runPose * 4, sy + 72, 10, 3);
+      ctx.fillRect(sx + 46 - runPose * 4, sy + 72, 10, 3);
+
+      ctx.fillStyle = "#11121a";
+      ctx.fillRect(sx + 1, sy + 50, 17, 15);
+      ctx.fillRect(sx + 56, sy + 47, 20, 16);
+      ctx.fillStyle = "#77e9ff";
+      ctx.fillRect(sx + 2, sy + 47 + runPose * 2, 16, 16);
+      ctx.fillRect(sx + 57, sy + 45 - runPose * 2, 19, 17);
+      ctx.fillStyle = "#b4f9ff";
+      ctx.fillRect(sx + 7, sy + 50 + runPose * 2, 6, 5);
+      ctx.fillRect(sx + 63, sy + 48 - runPose * 2, 7, 5);
+
+      if (punchPose) {
+        ctx.fillStyle = "#11121a";
+        ctx.fillRect(sx + 66, sy + 39, player.combo === 3 ? 58 : 42, 19);
+        ctx.fillStyle = "#77e9ff";
+        ctx.fillRect(sx + 68, sy + 38, player.combo === 3 ? 54 : 38, 17);
+        ctx.fillStyle = "#b4f9ff";
+        ctx.fillRect(sx + 74, sy + 41, player.combo === 3 ? 20 : 14, 5);
+        ctx.fillStyle = "rgba(255, 230, 109, 0.52)";
+        ctx.fillRect(sx + 84, sy + 34, player.combo === 3 ? 58 : 34, 6);
+        ctx.fillRect(sx + 92, sy + 58, player.combo === 3 ? 42 : 24, 4);
+      }
+
+      if (chargePose) {
+        const pulse = 28 + player.blastCharge * 0.18 + Math.sin(frame * 0.3) * 2;
+        ctx.strokeStyle = "#7df3ff";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(sx + 66, sy + 48, pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(125,243,255,0.75)";
+        ctx.fillRect(sx + 74, sy + 43, 10, 10);
+        ctx.lineWidth = 1;
+      }
+
+      ctx.restore();
+    }
+
+    function drawHud() {
+      const p = level().palette;
+      ctx.fillStyle = "rgba(3,6,16,0.74)";
+      ctx.fillRect(18, 18, 420, 116);
+      ctx.fillStyle = "rgba(3,6,16,0.74)";
+      ctx.fillRect(W - 370, 18, 342, 116);
+
+      drawText("Super Bear: Neon Rescue", 34, 30, { font: "bold 27px Trebuchet MS" });
+      drawText((levelIndex + 1) + ". " + level().name, 34, 64, { font: "18px Trebuchet MS", color: p.accent });
+      ctx.fillStyle = "#35101c";
+      ctx.fillRect(34, 98, 176, 14);
+      ctx.fillStyle = "#ff4d70";
+      ctx.fillRect(34, 98, 176 * (player.hp / player.maxHp), 14);
+      drawText("HP " + player.hp + "/" + player.maxHp, 224, 92, { font: "16px Trebuchet MS" });
+
+      drawText("Color Cores: " + player.cores, W - 44, 30, { font: "18px Trebuchet MS", align: "right", color: p.glow });
+      drawText("Suit: " + (player.suitTimer > 0 ? level().suit + " " + Math.ceil(player.suitTimer / 60) + "s" : level().suit + " x" + player.suitCharges), W - 44, 58, { font: "17px Trebuchet MS", align: "right", color: level().suitColor });
+      drawText("Blast: " + (player.blastCooldown > 0 ? "cooling" : Math.round((player.blastCharge / 90) * 100) + "%"), W - 44, 86, { font: "17px Trebuchet MS", align: "right", color: "#7df3ff" });
+
+      if (overlayTimer > 0) {
+        drawText(overlayText, W / 2, 154, { font: "bold 24px Trebuchet MS", align: "center", color: "#ffffff" });
+      }
+    }
+
+    function drawPanels() {
+      if (state === "start") {
+        drawBackground();
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, 0, W, H);
+        drawText("Super Bear: Neon Rescue", W / 2, 230, { font: "bold 58px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawText("A glitch virus corrupted Bear City's toys, robots, and arcade machines.", W / 2, 302, { font: "23px Trebuchet MS", align: "center", color: "#dff8ff" });
+        drawText("Press Enter or click to restore the color.", W / 2, 360, { font: "bold 28px Trebuchet MS", align: "center", color: "#7df3ff" });
+        drawText("Punch combos, charged Bear Blast, wall jumps, and temporary power suits.", W / 2, 410, { font: "19px Trebuchet MS", align: "center", color: "#ffe66d" });
+      }
+      if (state === "gameover" || state === "victory") {
+        ctx.fillStyle = "rgba(0,0,0,0.62)";
+        ctx.fillRect(0, 0, W, H);
+        drawText(state === "victory" ? "Bear City Restored" : "Signal Lost", W / 2, 276, { font: "bold 54px Trebuchet MS", align: "center", color: state === "victory" ? "#7df3ff" : "#ff6688" });
+        drawText(state === "victory" ? "Candy Factory, Cyber Sewers, Arcade Highway, and Moon Base are glowing again." : "Press R and give the virus another round.", W / 2, 346, { font: "23px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawText("Color cores collected: " + player.cores + "   Press R to restart", W / 2, 396, { font: "22px Trebuchet MS", align: "center", color: "#ffe66d" });
+      }
+    }
+
+    function draw() {
+      if (state === "start") {
+        drawPanels();
+        return;
+      }
+      drawBackground();
+      drawWorld();
+      drawHud();
+      if (state !== "playing") drawPanels();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
+      keys[key] = true;
+      if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) event.preventDefault();
+      if ((event.key === "Enter" || key === "r") && state === "start") restartGame();
+      if (key === "r" && (state === "gameover" || state === "victory")) restartGame();
+      if (event.key === "Escape") window.location.href = "/games/super-bear-neon-rescue";
+    });
+
+    window.addEventListener("keyup", (event) => {
+      keys[event.key.toLowerCase()] = false;
+    });
+
+    canvas.addEventListener("mousedown", () => {
+      if (state === "start") restartGame();
+    });
+
+    restartGame();
+    state = "start";
+    loop();
+  </script>
+</body>
+</html>

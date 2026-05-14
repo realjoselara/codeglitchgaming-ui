@@ -3,6 +3,14 @@ import "./games.css";
 
 const GAMES = [
   {
+    slug: "super-bear-neon-rescue",
+    title: "Super Bear: Neon Rescue",
+    status: "New game",
+    description:
+      "A retro arcade platformer where Super Bear restores Bear City with punch combos, charged Bear Blasts, wall jumps, and temporary power suits.",
+    highlights: ["Platformer", "4 districts", "Power suits"],
+  },
+  {
     slug: "super-bear",
     title: "Super Bear",
     status: "Playable now",
@@ -60,18 +68,24 @@ export default function GamesPage() {
         <section className="games-feature" aria-label="Featured game">
           <div className="games-feature-card">
             <p className="games-panel-label">Featured Drop</p>
-            <h2>Super Bear</h2>
+            <h2>Super Bear: Neon Rescue</h2>
             <p className="games-copy">
-              Battle through 10 stages, unlock upgrades, dodge monster swarms,
-              and clear the arcade&apos;s flagship cabinet.
+              Fight a glitch virus across Candy Factory, Cyber Sewers, Arcade
+              Highway, and Moon Base in a new retro platformer cabinet.
             </p>
             <div className="games-chip-row">
-              <span className="games-chip">Action arcade</span>
-              <span className="games-chip">10 levels</span>
-              <span className="games-chip">Bosses included</span>
+              <span className="games-chip">Platformer action</span>
+              <span className="games-chip">Bear Blast</span>
+              <span className="games-chip">Wall jumps</span>
             </div>
             <div className="games-actions">
-              <Link className="games-link games-link-primary" href="/games/super-bear">
+              <Link
+                className="games-link games-link-primary"
+                href="/games/super-bear-neon-rescue"
+              >
+                Play Neon Rescue
+              </Link>
+              <Link className="games-link" href="/games/super-bear">
                 Play Super Bear
               </Link>
               <Link className="games-link" href="/games/bearverse">
@@ -82,7 +96,7 @@ export default function GamesPage() {
               </Link>
               <a
                 className="games-link"
-                href="/games/super-bear/index.html"
+                href="/games/super-bear-neon-rescue/index.html"
                 target="_blank"
                 rel="noreferrer"
               >
