@@ -18,6 +18,14 @@ const GAMES = [
       "A separate 50-level space campaign with galaxy sectors, cosmic bosses, and a fresh arcade run.",
     highlights: ["50 levels", "Space themes", "Cosmic upgrades"],
   },
+  {
+    slug: "honey-typing-adventure",
+    title: "Honey Typing Adventure",
+    status: "Fresh drop",
+    description:
+      "Type the falling honey words before they hit the ground. Build streaks, save jars, and keep the hive buzzing.",
+    highlights: ["Typing challenge", "Falling honey", "Streak scoring"],
+  },
 ];
 
 export const metadata = {
@@ -68,6 +76,9 @@ export default function GamesPage() {
               </Link>
               <Link className="games-link" href="/games/bearverse">
                 Play Bearverse
+              </Link>
+              <Link className="games-link" href="/games/honey-typing-adventure">
+                Play Honey Typing
               </Link>
               <a
                 className="games-link"

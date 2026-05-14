@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Honey Typing Adventure</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 18% 18%, rgba(255, 244, 143, 0.4), transparent 20%),
+        radial-gradient(circle at 78% 8%, rgba(117, 210, 255, 0.32), transparent 28%),
+        linear-gradient(180deg, #78d7ff 0%, #f8e8a0 64%, #73b35a 100%);
+      color: #2d1b08;
+      font-family: "Trebuchet MS", system-ui, sans-serif;
+    }
+
+    .game-wrap {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 6px solid #3b260c;
+      border-radius: 24px;
+      background: #95dcff;
+      box-shadow: 0 20px 70px rgba(52, 35, 12, 0.36);
+    }
+
+    .help {
+      position: absolute;
+      right: 28px;
+      bottom: 24px;
+      color: #fff6ce;
+      font-size: 12px;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+      text-align: right;
+      line-height: 1.4;
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: rgba(48, 31, 8, 0.52);
+    }
+  </style>
+</head>
+<body>
+  <div class="game-wrap">
+    <canvas id="game" width="1280" height="720" tabindex="0" aria-label="Honey Typing Adventure game"></canvas>
+    <div class="help">1 Honey Fall<br />2 Mountain Typing<br />Type word + Enter<br />Backspace fixes<br />R restart</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width;
+    const H = canvas.height;
+
+    const WORDS = [
+      "honey", "comb", "buzz", "sweet", "jar", "gold", "flower", "nectar",
+      "hive", "drip", "sun", "pollen", "bee", "wax", "meadow", "glow",
+      "amber", "sticky", "sugar", "bloom", "spoon", "cloud", "garden",
+      "harvest", "keeper", "golden", "swirl", "drop", "rain", "claim"
+    ];
+
+    const MOUNTAIN_WORDS = [
+      "climb", "trail", "stone", "ridge", "summit", "brave", "boots", "peak",
+      "cloud", "focus", "higher", "snow", "jump", "strong", "valley", "spark",
+      "hero", "mountain", "finish", "victory"
+    ];
+
+    const superBearSheet = new Image();
+    superBearSheet.src = "./assets/super-bear-climb-sheet.png";
+
+    let state = "menu";
+    let frame = 0;
+    let typed = "";
+    let score = 0;
+    let claimed = 0;
+    let missed = 0;
+    let streak = 0;
+    let bestStreak = 0;
+    let spawnTimer = 0;
+    let difficulty = 1;
+    let message = "Press Enter to start";
+    let messageTimer = 0;
+    let jars = [];
+    let sparks = [];
+    let mountainStep = 0;
+    let mountainScore = 0;
+    let mountainMistakes = 0;
+
+    function random(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function pickWord() {
+      const poolLimit = Math.min(WORDS.length, 9 + Math.floor(difficulty * 4));
+      return WORDS[Math.floor(Math.random() * poolLimit)];
+    }
+
+    function setMessage(text, duration = 110) {
+      message = text;
+      messageTimer = duration;
+    }
+
+    function resetGame() {
+      state = "playing";
+      frame = 0;
+      typed = "";
+      score = 0;
+      claimed = 0;
+      missed = 0;
+      streak = 0;
+      bestStreak = 0;
+      spawnTimer = 24;
+      difficulty = 1;
+      jars = [];
+      sparks = [];
+      setMessage("Type honey words before they splash!", 150);
+    }
+
+    function resetMountainGame() {
+      state = "mountain";
+      frame = 0;
+      typed = "";
+      mountainStep = 0;
+      mountainScore = 0;
+      mountainMistakes = 0;
+      sparks = [];
+      jars = [];
+      setMessage("Type each trail word to climb.", 150);
+    }
+
+    function spawnJar() {
+      const word = pickWord();
+      const width = 74 + word.length * 18;
+      jars.push({
+        word,
+        x: random(width / 2 + 20, W - width / 2 - 20),
+        y: -60,
+        width,
+        height: 58,
+        speed: random(0.42, 0.72) + difficulty * 0.08,
+        wobble: random(0, Math.PI * 2),
+        claimed: false
+      });
+    }
+
+    function addSparks(x, y, color, amount = 18) {
+      for (let i = 0; i < amount; i++) {
+        sparks.push({
+          x,
+          y,
+          vx: random(-3, 3),
+          vy: random(-4, 1.5),
+          life: random(28, 54),
+          color,
+          size: random(3, 8)
+        });
+      }
+    }
+
+    function claimJar(index) {
+      const jar = jars[index];
+      const base = jar.word.length * 12;
+      const bonus = Math.min(80, streak * 6);
+      score += base + bonus;
+      claimed += 1;
+      streak += 1;
+      bestStreak = Math.max(bestStreak, streak);
+      typed = "";
+      setMessage("Claimed " + jar.word + " +" + (base + bonus), 70);
+      addSparks(jar.x, jar.y, "#ffd84d", 24);
+      jars.splice(index, 1);
+    }
+
+    function submitWord() {
+      if (!typed) return;
+      const exactIndex = jars.findIndex((jar) => jar.word === typed.toLowerCase());
+      if (exactIndex >= 0) {
+        claimJar(exactIndex);
+        return;
+      }
+      streak = 0;
+      setMessage("No jar says " + typed, 70);
+      typed = "";
+    }
+
+    function currentMountainWord() {
+      return MOUNTAIN_WORDS[Math.min(mountainStep, MOUNTAIN_WORDS.length - 1)];
+    }
+
+    function submitMountainWord() {
+      if (!typed) return;
+      const target = currentMountainWord();
+      if (typed.toLowerCase() === target) {
+        mountainStep += 1;
+        mountainScore += target.length * 18;
+        addSparks(240 + mountainStep * 41, H - 118 - mountainStep * 25, "#8fe9ff", 18);
+        typed = "";
+        if (mountainStep >= MOUNTAIN_WORDS.length) {
+          state = "mountainWin";
+          setMessage("Super Bear reached the summit!", 9999);
+        } else {
+          setMessage("Climb step " + mountainStep + " complete", 60);
+        }
+        return;
+      }
+
+      mountainMistakes += 1;
+      typed = "";
+      setMessage("Try that trail word again.", 70);
+    }
+
+    function update() {
+      frame += 1;
+      if (messageTimer > 0) messageTimer -= 1;
+      if (state !== "playing" && state !== "mountain") return;
+
+      if (state === "mountain") {
+        sparks.forEach((spark) => {
+          spark.x += spark.vx;
+          spark.y += spark.vy;
+          spark.vy += 0.12;
+          spark.life -= 1;
+        });
+        sparks = sparks.filter((spark) => spark.life > 0);
+        return;
+      }
+
+      difficulty = 1 + claimed / 18 + frame / 4200;
+      spawnTimer -= 1;
+      if (spawnTimer <= 0) {
+        spawnJar();
+        spawnTimer = Math.max(28, 92 - difficulty * 9);
+      }
+
+      jars.forEach((jar) => {
+        jar.y += jar.speed;
+        jar.wobble += 0.035;
+        jar.x += Math.sin(jar.wobble) * 0.36;
+      });
+
+      for (let i = jars.length - 1; i >= 0; i--) {
+        const jar = jars[i];
+        if (jar.y > H - 88) {
+          missed += 1;
+          streak = 0;
+          typed = "";
+          addSparks(jar.x, H - 72, "#f2a51a", 16);
+          setMessage(jar.word + " hit the ground", 70);
+          jars.splice(i, 1);
+        }
+      }
+
+      if (missed >= 5) {
+        state = "gameover";
+        setMessage("Game over. Press R to restart.", 9999);
+      }
+
+      sparks.forEach((spark) => {
+        spark.x += spark.vx;
+        spark.y += spark.vy;
+        spark.vy += 0.12;
+        spark.life -= 1;
+      });
+      sparks = sparks.filter((spark) => spark.life > 0);
+    }
+
+    function drawCloud(x, y, scale) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.78)";
+      ctx.beginPath();
+      ctx.arc(x, y, 24 * scale, 0, Math.PI * 2);
+      ctx.arc(x + 24 * scale, y - 8 * scale, 30 * scale, 0, Math.PI * 2);
+      ctx.arc(x + 54 * scale, y, 23 * scale, 0, Math.PI * 2);
+      ctx.arc(x + 28 * scale, y + 12 * scale, 28 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawBackground() {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#7bdcff");
+      sky.addColorStop(0.62, "#ffe79a");
+      sky.addColorStop(1, "#78b85c");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "rgba(255, 236, 91, 0.9)";
+      ctx.beginPath();
+      ctx.arc(112, 96, 46, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let i = 0; i < 6; i++) {
+        drawCloud((i * 238 + frame * 0.22) % (W + 180) - 110, 86 + (i % 3) * 58, 0.9 + (i % 2) * 0.25);
+      }
+
+      ctx.fillStyle = "#5f9b42";
+      ctx.fillRect(0, H - 68, W, 68);
+      ctx.fillStyle = "#3f742b";
+      for (let x = 0; x < W; x += 26) {
+        ctx.beginPath();
+        ctx.moveTo(x, H - 68);
+        ctx.lineTo(x + 12, H - 96 - ((x / 26) % 3) * 6);
+        ctx.lineTo(x + 24, H - 68);
+        ctx.fill();
+      }
+    }
+
+    function drawMountainBackground() {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#76d8ff");
+      sky.addColorStop(0.58, "#dff7ff");
+      sky.addColorStop(1, "#8ebf6b");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "rgba(255, 243, 126, 0.92)";
+      ctx.beginPath();
+      ctx.arc(106, 98, 42, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let i = 0; i < 7; i++) {
+        drawCloud((i * 205 + frame * 0.16) % (W + 170) - 90, 70 + (i % 3) * 56, 0.72 + (i % 2) * 0.2);
+      }
+
+      ctx.fillStyle = "#5b6b78";
+      ctx.beginPath();
+      ctx.moveTo(80, H - 64);
+      ctx.lineTo(650, 112);
+      ctx.lineTo(1200, H - 64);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#7d8a91";
+      ctx.beginPath();
+      ctx.moveTo(190, H - 64);
+      ctx.lineTo(650, 164);
+      ctx.lineTo(1080, H - 64);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#eefaff";
+      ctx.beginPath();
+      ctx.moveTo(650, 112);
+      ctx.lineTo(562, 218);
+      ctx.lineTo(635, 194);
+      ctx.lineTo(690, 232);
+      ctx.lineTo(746, 214);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(67, 45, 27, 0.82)";
+      ctx.lineWidth = 18;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      for (let i = 0; i < MOUNTAIN_WORDS.length; i++) {
+        const point = mountainPoint(i);
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      }
+      ctx.stroke();
+
+      for (let i = 0; i < MOUNTAIN_WORDS.length; i++) {
+        const point = mountainPoint(i);
+        ctx.fillStyle = i < mountainStep ? "#ffd84d" : "#f7edd1";
+        ctx.strokeStyle = "#4d3314";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "#579344";
+      ctx.fillRect(0, H - 64, W, 64);
+    }
+
+    function mountainPoint(index) {
+      const t = index / (MOUNTAIN_WORDS.length - 1);
+      const x = 210 + Math.sin(t * Math.PI * 2.4) * 120 + t * 835;
+      const y = H - 104 - t * 505 + Math.sin(t * Math.PI * 5) * 32;
+      return { x, y };
+    }
+
+    function roundRect(x, y, width, height, radius) {
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + width - radius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+      ctx.lineTo(x + width, y + height - radius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+      ctx.lineTo(x + radius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
+    }
+
+    function drawJar(jar) {
+      const x = jar.x - jar.width / 2;
+      const y = jar.y - jar.height / 2;
+      const active = jar.word.startsWith(typed.toLowerCase()) && typed.length > 0;
+
+      ctx.save();
+      ctx.translate(jar.x, jar.y);
+      ctx.rotate(Math.sin(jar.wobble) * 0.05);
+      ctx.translate(-jar.x, -jar.y);
+
+      ctx.fillStyle = active ? "rgba(255, 252, 219, 0.95)" : "rgba(255, 248, 210, 0.88)";
+      ctx.strokeStyle = active ? "#fff35f" : "#7b4c12";
+      ctx.lineWidth = active ? 5 : 3;
+      roundRect(x, y, jar.width, jar.height, 18);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#f1a51e";
+      roundRect(x + 10, y + 22, jar.width - 20, jar.height - 29, 14);
+      ctx.fill();
+
+      ctx.fillStyle = "#5d3509";
+      ctx.font = "bold 28px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(jar.word, jar.x, jar.y + 8);
+
+      if (active) {
+        ctx.fillStyle = "#1e7b37";
+        ctx.fillText(typed, jar.x, jar.y + 8);
+      }
+
+      ctx.restore();
+    }
+
+    function drawHud() {
+      ctx.fillStyle = "rgba(54, 32, 8, 0.78)";
+      roundRect(28, 24, 494, 86, 18);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff4c7";
+      ctx.font = "bold 24px Trebuchet MS";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText("Score " + score, 50, 40);
+      ctx.fillText("Claimed " + claimed, 220, 40);
+      ctx.fillText("Missed " + missed + "/5", 392, 40);
+
+      ctx.font = "20px Trebuchet MS";
+      ctx.fillStyle = "#ffd84d";
+      ctx.fillText("Streak " + streak + "   Best " + bestStreak, 50, 74);
+
+      ctx.fillStyle = "rgba(54, 32, 8, 0.86)";
+      roundRect(318, H - 62, 644, 44, 18);
+      ctx.fill();
+      ctx.fillStyle = "#fff7d6";
+      ctx.font = "bold 26px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Typing: " + (typed || "_"), W / 2, H - 40);
+    }
+
+    function drawMountainHud() {
+      ctx.fillStyle = "rgba(42, 32, 24, 0.78)";
+      roundRect(28, 24, 540, 90, 18);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff4c7";
+      ctx.font = "bold 24px Trebuchet MS";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      ctx.fillText("Mountain Typing Game", 50, 38);
+      ctx.font = "20px Trebuchet MS";
+      ctx.fillStyle = "#ffd84d";
+      ctx.fillText("Progress " + mountainStep + "/" + MOUNTAIN_WORDS.length, 50, 74);
+      ctx.fillText("Score " + mountainScore, 250, 74);
+      ctx.fillText("Misses " + mountainMistakes, 390, 74);
+
+      ctx.fillStyle = "rgba(42, 32, 24, 0.88)";
+      roundRect(196, H - 72, 888, 54, 18);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff7d6";
+      ctx.font = "bold 28px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Trail word: " + currentMountainWord() + "     Typing: " + (typed || "_"), W / 2, H - 45);
+    }
+
+    function drawSuperBear() {
+      const point = mountainPoint(Math.min(mountainStep, MOUNTAIN_WORDS.length - 1));
+      const frameCount = 4;
+      const spriteFrame = mountainStep >= MOUNTAIN_WORDS.length ? 3 : Math.floor(frame / 16) % frameCount;
+
+      if (superBearSheet.complete && superBearSheet.naturalWidth > 0) {
+        const frameWidth = Math.floor(superBearSheet.naturalWidth / frameCount);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(
+          superBearSheet,
+          spriteFrame * frameWidth,
+          0,
+          frameWidth,
+          superBearSheet.naturalHeight,
+          point.x - 54,
+          point.y - 116,
+          108,
+          142
+        );
+        ctx.imageSmoothingEnabled = true;
+        return;
+      }
+
+      ctx.fillStyle = "#f2a900";
+      ctx.beginPath();
+      ctx.arc(point.x, point.y - 48, 28, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f13212";
+      roundRect(point.x - 28, point.y - 28, 56, 58, 10);
+      ctx.fill();
+    }
+
+    function drawOverlay() {
+      if (!message || messageTimer <= 0) return;
+      ctx.fillStyle = "rgba(54, 32, 8, 0.82)";
+      roundRect(W / 2 - 300, 126, 600, 58, 18);
+      ctx.fill();
+      ctx.fillStyle = "#fff4c7";
+      ctx.font = "bold 26px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(message, W / 2, 155);
+    }
+
+    function drawMenu() {
+      ctx.fillStyle = "rgba(54, 32, 8, 0.82)";
+      roundRect(W / 2 - 390, H / 2 - 176, 780, 332, 26);
+      ctx.fill();
+      ctx.fillStyle = "#fff4c7";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "bold 52px Trebuchet MS";
+      ctx.fillText("Honey Typing Adventure", W / 2, H / 2 - 112);
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText("Choose a typing game.", W / 2, H / 2 - 58);
+
+      ctx.fillStyle = "#fff4c7";
+      roundRect(W / 2 - 310, H / 2 - 20, 290, 92, 18);
+      ctx.fill();
+      ctx.fillStyle = "#3d2608";
+      ctx.font = "bold 27px Trebuchet MS";
+      ctx.fillText("1. Honey Fall", W / 2 - 165, H / 2 + 13);
+      ctx.font = "18px Trebuchet MS";
+      ctx.fillText("Claim falling honey jars", W / 2 - 165, H / 2 + 45);
+
+      ctx.fillStyle = "#e4fbff";
+      roundRect(W / 2 + 20, H / 2 - 20, 290, 92, 18);
+      ctx.fill();
+      ctx.fillStyle = "#17313a";
+      ctx.font = "bold 27px Trebuchet MS";
+      ctx.fillText("2. Mountain Typing", W / 2 + 165, H / 2 + 13);
+      ctx.font = "18px Trebuchet MS";
+      ctx.fillText("Help Super Bear climb", W / 2 + 165, H / 2 + 45);
+
+      ctx.font = "bold 28px Trebuchet MS";
+      ctx.fillStyle = "#ffd84d";
+      ctx.fillText("Press 1 or 2", W / 2, H / 2 + 120);
+    }
+
+    function drawGameOver() {
+      ctx.fillStyle = "rgba(54, 32, 8, 0.86)";
+      roundRect(W / 2 - 310, H / 2 - 126, 620, 228, 26);
+      ctx.fill();
+      ctx.fillStyle = "#fff4c7";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "bold 48px Trebuchet MS";
+      ctx.fillText("The honey splashed!", W / 2, H / 2 - 62);
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText("Score " + score + "  Claimed " + claimed + "  Best streak " + bestStreak, W / 2, H / 2);
+      ctx.font = "bold 28px Trebuchet MS";
+      ctx.fillStyle = "#ffd84d";
+      ctx.fillText("Press R to restart", W / 2, H / 2 + 62);
+    }
+
+    function drawMountainWin() {
+      ctx.fillStyle = "rgba(42, 32, 24, 0.88)";
+      roundRect(W / 2 - 340, H / 2 - 124, 680, 232, 26);
+      ctx.fill();
+      ctx.fillStyle = "#fff4c7";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "bold 48px Trebuchet MS";
+      ctx.fillText("Summit Reached!", W / 2, H / 2 - 62);
+      ctx.font = "24px Trebuchet MS";
+      ctx.fillText("Super Bear climbed the mountain with " + mountainMistakes + " misses.", W / 2, H / 2);
+      ctx.font = "bold 28px Trebuchet MS";
+      ctx.fillStyle = "#ffd84d";
+      ctx.fillText("Press R to climb again or M for menu", W / 2, H / 2 + 64);
+    }
+
+    function draw() {
+      if (state === "mountain" || state === "mountainWin") {
+        drawMountainBackground();
+        drawSuperBear();
+      } else {
+        drawBackground();
+        jars.forEach(drawJar);
+      }
+
+      sparks.forEach((spark) => {
+        ctx.globalAlpha = Math.max(0, spark.life / 54);
+        ctx.fillStyle = spark.color;
+        ctx.beginPath();
+        ctx.arc(spark.x, spark.y, spark.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+
+      if (state === "mountain" || state === "mountainWin") {
+        drawMountainHud();
+      } else if (state !== "menu") {
+        drawHud();
+      }
+      drawOverlay();
+      if (state === "menu") drawMenu();
+      if (state === "gameover") drawGameOver();
+      if (state === "mountainWin") drawMountainWin();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      if (state === "menu" && (event.key === "1" || event.key === "Enter")) {
+        event.preventDefault();
+        resetGame();
+        return;
+      }
+
+      if (state === "menu" && event.key === "2") {
+        event.preventDefault();
+        resetMountainGame();
+        return;
+      }
+
+      if (state === "gameover" && event.key.toLowerCase() === "r") {
+        resetGame();
+        return;
+      }
+
+      if (state === "mountainWin" && event.key.toLowerCase() === "r") {
+        resetMountainGame();
+        return;
+      }
+
+      if ((state === "gameover" || state === "mountainWin") && event.key.toLowerCase() === "m") {
+        state = "menu";
+        typed = "";
+        message = "";
+        messageTimer = 0;
+        return;
+      }
+
+      if (state !== "playing" && state !== "mountain") return;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (state === "mountain") submitMountainWord();
+        else submitWord();
+        return;
+      }
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        typed = typed.slice(0, -1);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        typed = "";
+        return;
+      }
+
+      if (/^[a-zA-Z]$/.test(event.key) && typed.length < 14) {
+        typed += event.key.toLowerCase();
+      }
+    });
+
+    canvas.addEventListener("pointerdown", () => {
+      canvas.focus();
+    });
+
+    loop();
+  </script>
+</body>
+</html>
