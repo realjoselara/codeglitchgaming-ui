@@ -5,12 +5,16 @@ const CONTROLS = [
   "Press 1 for Basketball",
   "Press 2 for Basketball 2P",
   "Press 3 for Soccer",
+  "Press 4 for Football",
+  "Press 5 for Baseball",
   "Basketball 1P: A/D or arrows to move",
   "Basketball 2P: P1 uses WASD and Space",
   "Basketball 2P: P2 uses arrows and Enter",
   "Basketball 2P: players compete for separate scores",
   "Catch the rebound to reload",
   "Soccer: Space or mouse kicks near the ball",
+  "Football: run right and hold Space to sprint",
+  "Baseball: press Space when the pitch reaches the box",
   "R restarts after the buzzer",
 ];
 
@@ -30,8 +34,8 @@ export default function SuperBearSportsPage() {
               <p className="games-kicker">Arcade Cabinet</p>
               <h1>Super Bear Sports</h1>
               <p className="games-subtitle">
-                Pick basketball or soccer, then chase a quick high score with
-                Super Bear before the buzzer.
+                Pick basketball, soccer, football, or baseball, then chase a
+                quick high score with Super Bear before the buzzer.
               </p>
             </div>
 
@@ -82,16 +86,17 @@ export default function SuperBearSportsPage() {
             <p className="games-panel-label">Goal</p>
             <p className="games-copy">
               Basketball has solo and competitive two-player shooting modes.
-              Soccer is a fast penalty field challenge where you dribble, kick,
-              and beat the goalie.
+              Soccer is a fast penalty field challenge. Football sends Super
+              Bear sprinting through defenders. Baseball lets Super Bear time
+              swings for hits and home runs.
             </p>
           </aside>
 
           <aside className="games-info-card">
             <p className="games-panel-label">Series</p>
             <p className="games-copy">
-              Super Bear Sports is now a mini-game cabinet, starting with
-              Basketball and Soccer.
+              Super Bear Sports is now a mini-game cabinet with Basketball,
+              Soccer, Football, and Baseball.
             </p>
           </aside>
         </section>

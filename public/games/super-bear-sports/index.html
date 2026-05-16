@@ -61,7 +61,7 @@
 <body>
   <div class="game-wrap">
     <canvas id="game" width="1280" height="720"></canvas>
-    <div class="help">1 Hoops / 2 Hoops 2P / 3 Soccer<br />P1 WASD + Space<br />P2 Arrows + Enter<br />R restart</div>
+    <div class="help">1 Hoops / 2 Hoops 2P / 3 Soccer / 4 Football / 5 Baseball<br />Move: WASD or arrows<br />Space action<br />R restart</div>
   </div>
 
   <script>
@@ -81,11 +81,17 @@
     let messageTimer = 0;
     let basketballAvatarSheet = null;
     let soccerAvatarSheet = null;
+    let footballAvatarSheet = null;
+    let baseballAvatarSheet = null;
 
     const avatarImage = new Image();
     avatarImage.src = "./assets/super-bear-sports-avatar-sheet.png";
     const soccerAvatarImage = new Image();
     soccerAvatarImage.src = "./assets/super-bear-sports-soccer-sheet.png";
+    const footballAvatarImage = new Image();
+    footballAvatarImage.src = "./assets/super-bear-sports-football-sheet.png";
+    const baseballAvatarImage = new Image();
+    baseballAvatarImage.src = "./assets/super-bear-sports-baseball-sheet.png";
 
     const avatarFrames = {
       idle: { sx: 220, sy: 330, sw: 170, sh: 310 },
@@ -161,6 +167,29 @@
       rolling: false,
     };
 
+    const football = {
+      score: 0,
+      tackles: 0,
+      time: 60,
+      lastTick: performance.now(),
+      sprint: 100,
+      defenders: [
+        { x: 570, y: 410, dir: 1, speed: 2.2 },
+        { x: 760, y: 545, dir: -1, speed: 2.7 },
+        { x: 940, y: 455, dir: 1, speed: 3.1 },
+      ],
+    };
+
+    const baseball = {
+      score: 0,
+      outs: 0,
+      time: 60,
+      pitchTimer: 45,
+      swingTimer: 0,
+      message: "Wait for the pitch",
+      ball: { x: 920, y: 418, vx: -7.2, vy: 0, active: false, hit: false },
+    };
+
     const sparks = [];
 
     function clamp(value, min, max) {
@@ -171,13 +200,20 @@
       sport = nextSport;
       basketballPlayers = nextSport === "basketball" ? players : 1;
       state = "start";
-      message = nextSport === "soccer" ? "Click or press Space to kick off" : "Click or press Space to start";
+      message =
+        nextSport === "soccer"
+          ? "Click or press Space to kick off"
+          : nextSport === "football"
+            ? "Click or press Space for kickoff"
+            : nextSport === "baseball"
+              ? "Click or press Space to bat"
+            : "Click or press Space to start";
       messageTimer = 9999;
       charge = 0;
       charging = false;
       chargingPlayer = null;
-      player.x = nextSport === "soccer" ? 260 : players === 2 ? 260 : 315;
-      player.y = nextSport === "soccer" ? 520 : 570;
+      player.x = nextSport === "soccer" ? 260 : nextSport === "football" ? 145 : nextSport === "baseball" ? 350 : players === 2 ? 260 : 315;
+      player.y = nextSport === "soccer" ? 520 : nextSport === "football" ? 500 : nextSport === "baseball" ? 555 : 570;
       player.vx = 0;
       player.facing = 1;
       player.hasBall = nextSport === "basketball";
@@ -258,6 +294,63 @@
       state = "playing";
     }
 
+    function resetFootballGame() {
+      sport = "football";
+      basketballPlayers = 1;
+      football.score = 0;
+      football.tackles = 0;
+      football.time = 60;
+      football.lastTick = performance.now();
+      football.sprint = 100;
+      football.defenders[0].x = 570;
+      football.defenders[0].y = 410;
+      football.defenders[1].x = 760;
+      football.defenders[1].y = 545;
+      football.defenders[2].x = 940;
+      football.defenders[2].y = 455;
+      player.x = 145;
+      player.y = 500;
+      player.vx = 0;
+      player.facing = 1;
+      player.hasBall = true;
+      player2.hasBall = false;
+      charge = 0;
+      charging = false;
+      chargingPlayer = null;
+      sparks.length = 0;
+      setMessage("Run to the end zone", 100);
+      state = "playing";
+    }
+
+    function resetBaseballGame() {
+      sport = "baseball";
+      basketballPlayers = 1;
+      baseball.score = 0;
+      baseball.outs = 0;
+      baseball.time = 60;
+      baseball.pitchTimer = 35;
+      baseball.swingTimer = 0;
+      baseball.message = "Wait for the pitch";
+      baseball.ball.x = 920;
+      baseball.ball.y = 418;
+      baseball.ball.vx = -7.2;
+      baseball.ball.vy = 0;
+      baseball.ball.active = false;
+      baseball.ball.hit = false;
+      player.x = 350;
+      player.y = 555;
+      player.vx = 0;
+      player.facing = 1;
+      player.hasBall = false;
+      player2.hasBall = false;
+      charge = 0;
+      charging = false;
+      chargingPlayer = null;
+      sparks.length = 0;
+      setMessage("Time your swing", 100);
+      state = "playing";
+    }
+
     function setMessage(text, duration = 80) {
       message = text;
       messageTimer = duration;
@@ -323,11 +416,18 @@
       if (state === "menu") return;
       if (state === "start") {
         if (sport === "soccer") resetSoccerGame();
+        else if (sport === "football") resetFootballGame();
+        else if (sport === "baseball") resetBaseballGame();
         else resetGame(basketballPlayers);
         return;
       }
       if (sport === "soccer") {
         kickSoccerBall();
+        return;
+      }
+      if (sport === "football") return;
+      if (sport === "baseball") {
+        swingBaseball();
         return;
       }
       if (state !== "playing" || !shooter.hasBall) return;
@@ -337,6 +437,8 @@
 
     function releaseShot(shooter = player) {
       if (sport === "soccer") return;
+      if (sport === "football") return;
+      if (sport === "baseball") return;
       if (state !== "playing" || !charging || chargingPlayer !== shooter || !shooter.hasBall) {
         if (chargingPlayer === shooter) {
           charging = false;
@@ -590,6 +692,131 @@
       }
     }
 
+    function resetFootballPlay(wasTackled = false) {
+      player.x = 145;
+      player.y = 500;
+      player.vx = 0;
+      player.facing = 1;
+      football.sprint = 100;
+      football.defenders[0].x = 570;
+      football.defenders[0].y = 410;
+      football.defenders[1].x = 760;
+      football.defenders[1].y = 545;
+      football.defenders[2].x = 940;
+      football.defenders[2].y = 455;
+      setMessage(wasTackled ? "Tackled - try again" : "Kickoff return", 70);
+    }
+
+    function updateFootball(dt) {
+      football.time = Math.max(0, football.time - dt);
+      if (football.time <= 0) {
+        state = "over";
+        setMessage("Final whistle!", 9999);
+      }
+
+      const left = keys.a || keys.arrowleft;
+      const right = keys.d || keys.arrowright;
+      const up = keys.w || keys.arrowup;
+      const down = keys.s || keys.arrowdown;
+      const sprinting = keys[" "] && football.sprint > 0;
+      const speed = sprinting ? 7.2 : 4.8;
+      player.vx = 0;
+      if (left) player.vx -= speed;
+      if (right) player.vx += speed;
+      if (up) player.y -= speed * 0.74;
+      if (down) player.y += speed * 0.74;
+      player.x = clamp(player.x + player.vx, 90, 1140);
+      player.y = clamp(player.y, 350, 635);
+      if (player.vx !== 0) player.facing = player.vx > 0 ? 1 : -1;
+      player.walkFrame = player.vx === 0 && !up && !down ? 0 : Math.floor(frame / 7) % 2;
+
+      if (sprinting) football.sprint = Math.max(0, football.sprint - 1.1);
+      else football.sprint = Math.min(100, football.sprint + 0.42);
+
+      for (const defender of football.defenders) {
+        defender.y += defender.dir * defender.speed;
+        if (defender.y < 355 || defender.y > 625) defender.dir *= -1;
+        const dx = player.x - defender.x;
+        const dy = player.y - defender.y;
+        if (Math.hypot(dx, dy) < 58) {
+          football.tackles += 1;
+          makeBurst(player.x, player.y, "#ff5f64", 16);
+          resetFootballPlay(true);
+          return;
+        }
+      }
+
+      if (player.x > 1086) {
+        football.score += 7;
+        makeBurst(player.x, player.y - 80, "#ffd650", 30);
+        setMessage("Touchdown!", 80);
+        resetFootballPlay(false);
+      }
+    }
+
+    function startBaseballPitch() {
+      baseball.ball.x = 920;
+      baseball.ball.y = 418 + Math.sin(frame * 0.07) * 26;
+      baseball.ball.vx = -5.6 - Math.random() * 1.2;
+      baseball.ball.vy = (Math.random() - 0.5) * 0.55;
+      baseball.ball.active = true;
+      baseball.ball.hit = false;
+      baseball.message = "Swing!";
+    }
+
+    function swingBaseball() {
+      if (state !== "playing" || sport !== "baseball") return;
+      baseball.swingTimer = 20;
+      const inZone = baseball.ball.active && !baseball.ball.hit && baseball.ball.x > 300 && baseball.ball.x < 430;
+      if (!inZone) {
+        baseball.message = "Too early";
+        return;
+      }
+
+      const sweetSpot = 365;
+      const timing = Math.abs(baseball.ball.x - sweetSpot);
+      const runs = timing < 18 ? 4 : timing < 42 ? 2 : 1;
+      baseball.score += runs;
+      baseball.message = runs === 4 ? "Home run!" : runs === 2 ? "Double!" : "Base hit!";
+      baseball.ball.hit = true;
+      baseball.ball.vx = 10 + runs * 1.7;
+      baseball.ball.vy = -8 - runs;
+      makeBurst(365, 420, runs === 4 ? "#ffd650" : "#8fefff", 20);
+      baseball.pitchTimer = 80;
+    }
+
+    function updateBaseball(dt) {
+      baseball.time = Math.max(0, baseball.time - dt);
+      if (baseball.time <= 0) {
+        state = "over";
+        setMessage("Game over!", 9999);
+      }
+
+      baseball.swingTimer = Math.max(0, baseball.swingTimer - 1);
+      if (!baseball.ball.active && baseball.pitchTimer > 0) {
+        baseball.pitchTimer -= 1;
+        if (baseball.pitchTimer <= 0) startBaseballPitch();
+      }
+
+      if (baseball.ball.active) {
+        baseball.ball.x += baseball.ball.vx;
+        baseball.ball.y += baseball.ball.vy;
+        if (baseball.ball.hit) baseball.ball.vy += 0.24;
+
+        if (!baseball.ball.hit && baseball.ball.x < 270) {
+          baseball.outs += 1;
+          baseball.message = "Strike!";
+          baseball.ball.active = false;
+          baseball.pitchTimer = 55;
+        }
+
+        if (baseball.ball.hit && (baseball.ball.x > W + 80 || baseball.ball.y > H + 80)) {
+          baseball.ball.active = false;
+          baseball.pitchTimer = 55;
+        }
+      }
+    }
+
     function update() {
       frame += 1;
       const now = performance.now();
@@ -599,6 +826,8 @@
 
       if (state === "playing") {
         if (sport === "soccer") updateSoccer(dt);
+        else if (sport === "football") updateFootball(dt);
+        else if (sport === "baseball") updateBaseball(dt);
         else updatePlaying(dt);
       }
 
@@ -746,6 +975,117 @@
       ctx.restore();
     }
 
+    function drawFootballField() {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#18324f");
+      sky.addColorStop(0.55, "#102436");
+      sky.addColorStop(1, "#071018");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "#176237";
+      ctx.fillRect(0, 330, W, 390);
+      for (let i = 0; i < 10; i++) {
+        ctx.fillStyle = i % 2 ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.08)";
+        ctx.fillRect(80 + i * 104, 330, 104, 390);
+      }
+
+      ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(80, 360, 1040, 270);
+      for (let i = 1; i < 10; i++) {
+        const x = 80 + i * 104;
+        ctx.beginPath();
+        ctx.moveTo(x, 360);
+        ctx.lineTo(x, 630);
+        ctx.stroke();
+        drawOutlinedText(String(i * 10), x + 6, 386, { font: "16px Trebuchet MS", color: "rgba(255,255,255,0.86)" });
+      }
+      ctx.fillStyle = "rgba(255, 214, 80, 0.2)";
+      ctx.fillRect(1040, 360, 80, 270);
+      drawOutlinedText("END ZONE", 1080, 490, { font: "bold 24px Trebuchet MS", align: "center", color: "#ffd650" });
+
+      ctx.strokeStyle = "#ffd650";
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(1152, 330);
+      ctx.lineTo(1152, 210);
+      ctx.moveTo(1108, 210);
+      ctx.lineTo(1196, 210);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+
+      for (const defender of football.defenders) {
+        ctx.fillStyle = "rgba(0,0,0,0.28)";
+        ctx.beginPath();
+        ctx.ellipse(defender.x, defender.y + 28, 36, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#22344f";
+        ctx.fillRect(defender.x - 24, defender.y - 48, 48, 72);
+        ctx.fillStyle = "#8fefff";
+        ctx.fillRect(defender.x - 20, defender.y - 72, 40, 32);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(defender.x - 14, defender.y - 34, 28, 12);
+        ctx.fillStyle = "#071018";
+        ctx.fillRect(defender.x - 14, defender.y - 62, 28, 8);
+      }
+    }
+
+    function drawBaseballField() {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#17314f");
+      sky.addColorStop(0.56, "#102337");
+      sky.addColorStop(1, "#071018");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "#17623f";
+      ctx.fillRect(0, 330, W, 390);
+      ctx.fillStyle = "#c8833b";
+      ctx.beginPath();
+      ctx.moveTo(350, 600);
+      ctx.lineTo(640, 420);
+      ctx.lineTo(930, 600);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#e7d7ad";
+      ctx.fillRect(332, 584, 34, 18);
+      ctx.fillRect(624, 412, 32, 18);
+      ctx.fillRect(914, 584, 34, 18);
+      ctx.strokeStyle = "rgba(255,255,255,0.76)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(350, 600);
+      ctx.lineTo(640, 420);
+      ctx.lineTo(930, 600);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = "#dff7ff";
+      ctx.fillRect(880, 390, 56, 74);
+      ctx.fillStyle = "#ff5f64";
+      ctx.fillRect(894, 416, 28, 28);
+      drawOutlinedText("Pitcher", 908, 474, { font: "16px Trebuchet MS", align: "center", color: "#dff9ff" });
+
+      if (baseball.ball.active) {
+        ctx.fillStyle = "#f8fbff";
+        ctx.beginPath();
+        ctx.arc(baseball.ball.x, baseball.ball.y, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#d92f2f";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(baseball.ball.x - 3, baseball.ball.y, 5, -1.2, 1.2);
+        ctx.arc(baseball.ball.x + 3, baseball.ball.y, 5, Math.PI - 1.2, Math.PI + 1.2);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      ctx.strokeStyle = "rgba(255,255,255,0.4)";
+      ctx.strokeRect(300, 368, 130, 104);
+      drawOutlinedText(baseball.message, W / 2, 330, { font: "bold 28px Trebuchet MS", align: "center", color: "#fff2a8" });
+    }
+
     function drawFallbackBear() {
       const x = Math.round(player.x);
       const y = Math.round(player.y);
@@ -797,7 +1137,14 @@
     }
 
     function drawBearFor(targetPlayer, label) {
-      const currentSheet = sport === "soccer" ? soccerAvatarSheet : basketballAvatarSheet;
+      const currentSheet =
+        sport === "soccer"
+          ? soccerAvatarSheet
+          : sport === "football"
+            ? footballAvatarSheet
+            : sport === "baseball"
+              ? baseballAvatarSheet
+            : basketballAvatarSheet;
       if (!currentSheet) {
         drawFallbackBear();
         return;
@@ -807,8 +1154,8 @@
       const y = Math.round(targetPlayer.y);
       const isMoving = Math.abs(targetPlayer.vx) > 0.1;
       let pose = isMoving ? "run" : "idle";
-      if ((charging && targetPlayer.hasBall) || (sport === "soccer" && message === "Shot!")) pose = "shoot";
-      if (messageTimer > 0 && (message === "Bucket!" || message === "Three points!" || message === "Swish bonus!" || message === "Goal!")) {
+      if ((charging && targetPlayer.hasBall) || (sport === "soccer" && message === "Shot!") || (sport === "baseball" && baseball.swingTimer > 0)) pose = "shoot";
+      if (messageTimer > 0 && (message === "Bucket!" || message === "Three points!" || message === "Swish bonus!" || message === "Goal!" || message === "Touchdown!")) {
         pose = "celebrate";
       }
 
@@ -897,6 +1244,14 @@
         drawSoccerHud();
         return;
       }
+      if (sport === "football") {
+        drawFootballHud();
+        return;
+      }
+      if (sport === "baseball") {
+        drawBaseballHud();
+        return;
+      }
 
       ctx.fillStyle = "rgba(2,8,16,0.68)";
       ctx.fillRect(22, 18, 390, 126);
@@ -955,6 +1310,44 @@
       }
     }
 
+    function drawFootballHud() {
+      ctx.fillStyle = "rgba(2,8,16,0.68)";
+      ctx.fillRect(22, 18, 390, 134);
+      ctx.fillRect(W - 318, 18, 290, 104);
+      drawOutlinedText("Super Bear Sports", 42, 32, { font: "bold 28px Trebuchet MS" });
+      drawOutlinedText("Football", 42, 64, { font: "18px Trebuchet MS", color: "#ffd650" });
+      drawOutlinedText("Run to the end zone", 42, 100, { font: "17px Trebuchet MS", color: "#dff9ff" });
+      ctx.fillStyle = "rgba(255,255,255,0.14)";
+      ctx.fillRect(42, 124, 220, 14);
+      ctx.fillStyle = "#ff5f64";
+      ctx.fillRect(42, 124, 220 * (football.sprint / 100), 14);
+      ctx.strokeStyle = "rgba(255,255,255,0.5)";
+      ctx.strokeRect(42, 124, 220, 14);
+      drawOutlinedText("Points: " + football.score, W - 48, 30, { font: "bold 26px Trebuchet MS", align: "right", color: "#ffd650" });
+      drawOutlinedText("Time: " + Math.ceil(football.time), W - 48, 62, { font: "20px Trebuchet MS", align: "right", color: "#ffffff" });
+      drawOutlinedText("Tackles: " + football.tackles, W - 48, 88, { font: "18px Trebuchet MS", align: "right", color: "#ff9aa2" });
+
+      if (messageTimer > 0 || state !== "playing") {
+        drawOutlinedText(message, W / 2, 48, { font: "bold 30px Trebuchet MS", align: "center", color: "#fff2a8" });
+      }
+    }
+
+    function drawBaseballHud() {
+      ctx.fillStyle = "rgba(2,8,16,0.68)";
+      ctx.fillRect(22, 18, 390, 122);
+      ctx.fillRect(W - 318, 18, 290, 104);
+      drawOutlinedText("Super Bear Sports", 42, 32, { font: "bold 28px Trebuchet MS" });
+      drawOutlinedText("Baseball", 42, 64, { font: "18px Trebuchet MS", color: "#ffd650" });
+      drawOutlinedText("Press Space when the pitch enters the box", 42, 100, { font: "16px Trebuchet MS", color: "#dff9ff" });
+      drawOutlinedText("Runs: " + baseball.score, W - 48, 30, { font: "bold 26px Trebuchet MS", align: "right", color: "#ffd650" });
+      drawOutlinedText("Time: " + Math.ceil(baseball.time), W - 48, 62, { font: "20px Trebuchet MS", align: "right", color: "#ffffff" });
+      drawOutlinedText("Strikes: " + baseball.outs, W - 48, 88, { font: "18px Trebuchet MS", align: "right", color: "#ff9aa2" });
+
+      if (messageTimer > 0 || state !== "playing") {
+        drawOutlinedText(message, W / 2, 48, { font: "bold 30px Trebuchet MS", align: "center", color: "#fff2a8" });
+      }
+    }
+
     function drawPanels() {
       if (state === "menu") {
         ctx.fillStyle = "rgba(0,0,0,0.58)";
@@ -963,36 +1356,46 @@
         drawOutlinedText("Choose a mini game", W / 2, H / 2 - 58, { font: "28px Trebuchet MS", align: "center", color: "#dff9ff" });
 
         ctx.fillStyle = "rgba(5,12,22,0.82)";
-        ctx.fillRect(W / 2 - 480, H / 2 - 8, 288, 142);
-        ctx.fillRect(W / 2 - 144, H / 2 - 8, 288, 142);
-        ctx.fillRect(W / 2 + 192, H / 2 - 8, 288, 142);
+        const cardY = H / 2 - 8;
+        const cardW = 208;
+        const cardGap = 18;
+        const cardStart = W / 2 - (cardW * 5 + cardGap * 4) / 2;
+        for (let i = 0; i < 5; i++) ctx.fillRect(cardStart + i * (cardW + cardGap), cardY, cardW, 142);
         ctx.strokeStyle = "#39ffb5";
         ctx.lineWidth = 3;
-        ctx.strokeRect(W / 2 - 480, H / 2 - 8, 288, 142);
+        ctx.strokeRect(cardStart, cardY, cardW, 142);
         ctx.strokeStyle = "#8fefff";
-        ctx.strokeRect(W / 2 - 144, H / 2 - 8, 288, 142);
+        ctx.strokeRect(cardStart + cardW + cardGap, cardY, cardW, 142);
         ctx.strokeStyle = "#ffd650";
-        ctx.strokeRect(W / 2 + 192, H / 2 - 8, 288, 142);
+        ctx.strokeRect(cardStart + 2 * (cardW + cardGap), cardY, cardW, 142);
+        ctx.strokeStyle = "#ff5f64";
+        ctx.strokeRect(cardStart + 3 * (cardW + cardGap), cardY, cardW, 142);
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(cardStart + 4 * (cardW + cardGap), cardY, cardW, 142);
         ctx.lineWidth = 1;
 
-        drawOutlinedText("1", W / 2 - 448, H / 2 + 24, { font: "bold 30px Trebuchet MS", color: "#39ffb5" });
-        drawOutlinedText("Basketball", W / 2 - 336, H / 2 + 20, { font: "bold 30px Trebuchet MS", align: "center", color: "#ffffff" });
-        drawOutlinedText("1 player", W / 2 - 336, H / 2 + 72, { font: "20px Trebuchet MS", align: "center", color: "#dff9ff" });
-        drawOutlinedText("2", W / 2 - 112, H / 2 + 24, { font: "bold 30px Trebuchet MS", color: "#8fefff" });
-        drawOutlinedText("Basketball", W / 2, H / 2 + 14, { font: "bold 30px Trebuchet MS", align: "center", color: "#ffffff" });
-        drawOutlinedText("2 players", W / 2, H / 2 + 72, { font: "20px Trebuchet MS", align: "center", color: "#dff9ff" });
-        drawOutlinedText("3", W / 2 + 224, H / 2 + 24, { font: "bold 30px Trebuchet MS", color: "#ffd650" });
-        drawOutlinedText("Soccer", W / 2 + 336, H / 2 + 20, { font: "bold 30px Trebuchet MS", align: "center", color: "#ffffff" });
-        drawOutlinedText("Kick past goalie", W / 2 + 336, H / 2 + 72, { font: "20px Trebuchet MS", align: "center", color: "#dff9ff" });
+        const labels = [
+          ["1", "Basketball", "1 player", "#39ffb5"],
+          ["2", "Basketball", "2 players", "#8fefff"],
+          ["3", "Soccer", "Kick goals", "#ffd650"],
+          ["4", "Football", "Touchdowns", "#ff5f64"],
+          ["5", "Baseball", "Hit pitches", "#ffffff"],
+        ];
+        labels.forEach((item, index) => {
+          const x = cardStart + index * (cardW + cardGap);
+          drawOutlinedText(item[0], x + 22, H / 2 + 24, { font: "bold 27px Trebuchet MS", color: item[3] });
+          drawOutlinedText(item[1], x + cardW / 2 + 8, H / 2 + 20, { font: "bold 24px Trebuchet MS", align: "center", color: "#ffffff" });
+          drawOutlinedText(item[2], x + cardW / 2 + 8, H / 2 + 72, { font: "18px Trebuchet MS", align: "center", color: "#dff9ff" });
+        });
       }
 
       if (state === "start") {
         ctx.fillStyle = "rgba(0,0,0,0.58)";
         ctx.fillRect(0, 0, W, H);
         drawOutlinedText("Super Bear Sports", W / 2, H / 2 - 72, { font: "bold 56px Trebuchet MS", align: "center" });
-        drawOutlinedText(sport === "soccer" ? "Soccer" : basketballPlayers === 2 ? "Basketball 2 Player" : "Basketball", W / 2, H / 2 - 16, { font: "bold 38px Trebuchet MS", align: "center", color: "#ffd650" });
+        drawOutlinedText(sport === "soccer" ? "Soccer" : sport === "football" ? "Football" : sport === "baseball" ? "Baseball" : basketballPlayers === 2 ? "Basketball 2 Player" : "Basketball", W / 2, H / 2 - 16, { font: "bold 38px Trebuchet MS", align: "center", color: "#ffd650" });
         drawOutlinedText(
-          sport === "soccer" ? "Move to the ball, then press Space to kick" : basketballPlayers === 2 ? "P1: WASD + Space    P2: Arrows + Enter" : "Hold Space to charge, release to shoot",
+          sport === "soccer" ? "Move to the ball, then press Space to kick" : sport === "football" ? "Run right, dodge defenders, hold Space to sprint" : sport === "baseball" ? "Press Space when the pitch reaches the box" : basketballPlayers === 2 ? "P1: WASD + Space    P2: Arrows + Enter" : "Hold Space to charge, release to shoot",
           W / 2,
           H / 2 + 42,
           { font: "24px Trebuchet MS", align: "center", color: "#dff9ff" }
@@ -1002,8 +1405,8 @@
       if (state === "over") {
         ctx.fillStyle = "rgba(0,0,0,0.64)";
         ctx.fillRect(0, 0, W, H);
-        const finalScore = sport === "soccer" ? soccer.score : basketballPlayers === 2 ? game.p1Score + " - " + game.p2Score : game.score;
-        const statLine = sport === "soccer" ? "Goalie saves: " + soccer.saves : "Best combo: " + game.bestCombo;
+        const finalScore = sport === "soccer" ? soccer.score : sport === "football" ? football.score : sport === "baseball" ? baseball.score : basketballPlayers === 2 ? game.p1Score + " - " + game.p2Score : game.score;
+        const statLine = sport === "soccer" ? "Goalie saves: " + soccer.saves : sport === "football" ? "Tackles: " + football.tackles : sport === "baseball" ? "Strikes: " + baseball.outs : "Best combo: " + game.bestCombo;
         const winner =
           basketballPlayers !== 2
             ? statLine
@@ -1020,6 +1423,8 @@
 
     function draw() {
       if (sport === "soccer") drawSoccerField();
+      else if (sport === "football") drawFootballField();
+      else if (sport === "baseball") drawBaseballField();
       else drawCourt();
       for (const p of sparks) {
         ctx.globalAlpha = Math.max(0, p.ttl / 46);
@@ -1029,7 +1434,7 @@
       ctx.globalAlpha = 1;
       drawBear();
       if (sport === "soccer") drawSoccerBall();
-      else drawBall();
+      else if (sport === "basketball") drawBall();
       drawHud();
       drawPanels();
     }
@@ -1046,6 +1451,8 @@
         if (event.key === "1") chooseSport("basketball", 1);
         if (event.key === "2") chooseSport("basketball", 2);
         if (event.key === "3") chooseSport("soccer");
+        if (event.key === "4") chooseSport("football");
+        if (event.key === "5") chooseSport("baseball");
       }
       if (event.code === "Space") {
         event.preventDefault();
@@ -1057,6 +1464,8 @@
       }
       if (event.key.toLowerCase() === "r" && state !== "playing") {
         if (sport === "soccer") resetSoccerGame();
+        else if (sport === "football") resetFootballGame();
+        else if (sport === "baseball") resetBaseballGame();
         else resetGame(basketballPlayers);
       }
       if (event.key === "Escape") window.location.href = "/games/super-bear-sports";
@@ -1073,9 +1482,11 @@
       if (state === "menu") {
         const rect = canvas.getBoundingClientRect();
         const x = (event.clientX - rect.left) * (canvas.width / rect.width);
-        if (x < W / 3) chooseSport("basketball", 1);
-        else if (x < (W * 2) / 3) chooseSport("basketball", 2);
-        else chooseSport("soccer");
+        if (x < W / 5) chooseSport("basketball", 1);
+        else if (x < (W * 2) / 5) chooseSport("basketball", 2);
+        else if (x < (W * 3) / 5) chooseSport("soccer");
+        else if (x < (W * 4) / 5) chooseSport("football");
+        else chooseSport("baseball");
         return;
       }
       startCharge(player);
@@ -1093,6 +1504,14 @@
 
     soccerAvatarImage.onload = () => {
       soccerAvatarSheet = makeTransparentAvatarSheet(soccerAvatarImage);
+    };
+
+    footballAvatarImage.onload = () => {
+      footballAvatarSheet = makeTransparentAvatarSheet(footballAvatarImage);
+    };
+
+    baseballAvatarImage.onload = () => {
+      baseballAvatarSheet = makeTransparentAvatarSheet(baseballAvatarImage);
     };
 
     loop();
