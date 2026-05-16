@@ -3,6 +3,14 @@ import "./games.css";
 
 const GAMES = [
   {
+    slug: "super-bear-sports",
+    title: "Super Bear Sports",
+    status: "New sport",
+    description:
+      "A sports mini-game cabinet with basketball shooting and soccer shots where Super Bear chases high scores before the buzzer.",
+    highlights: ["Basketball", "Soccer", "60-second runs"],
+  },
+  {
     slug: "super-bear-neon-rescue",
     title: "Super Bear: Neon Rescue",
     status: "New game",
@@ -68,19 +76,25 @@ export default function GamesPage() {
         <section className="games-feature" aria-label="Featured game">
           <div className="games-feature-card">
             <p className="games-panel-label">Featured Drop</p>
-            <h2>Super Bear: Neon Rescue</h2>
+            <h2>Super Bear Sports</h2>
             <p className="games-copy">
-              Fight a glitch virus across Candy Factory, Cyber Sewers, Arcade
-              Highway, and Moon Base in a new retro platformer cabinet.
+              Pick basketball or soccer, then charge jumpers, kick past the
+              goalie, and chase a high score before the buzzer.
             </p>
             <div className="games-chip-row">
-              <span className="games-chip">Platformer action</span>
-              <span className="games-chip">Bear Blast</span>
-              <span className="games-chip">Wall jumps</span>
+              <span className="games-chip">Basketball</span>
+              <span className="games-chip">Soccer</span>
+              <span className="games-chip">Buzzer runs</span>
             </div>
             <div className="games-actions">
               <Link
                 className="games-link games-link-primary"
+                href="/games/super-bear-sports"
+              >
+                Play Sports
+              </Link>
+              <Link
+                className="games-link"
                 href="/games/super-bear-neon-rescue"
               >
                 Play Neon Rescue
@@ -96,7 +110,7 @@ export default function GamesPage() {
               </Link>
               <a
                 className="games-link"
-                href="/games/super-bear-neon-rescue/index.html"
+                href="/games/super-bear-sports/index.html"
                 target="_blank"
                 rel="noreferrer"
               >

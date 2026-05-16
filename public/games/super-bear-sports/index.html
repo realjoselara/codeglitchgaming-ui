@@ -1,0 +1,1101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Super Bear Sports</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top left, rgba(255, 213, 79, 0.18), transparent 26%),
+        radial-gradient(circle at bottom right, rgba(0, 229, 255, 0.2), transparent 28%),
+        #07111f;
+      color: #f4fbff;
+      font-family: "Trebuchet MS", system-ui, sans-serif;
+    }
+
+    .game-wrap {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 6px solid #061018;
+      border-radius: 24px;
+      background: #101f32;
+      box-shadow: 0 18px 70px rgba(0, 0, 0, 0.45);
+    }
+
+    .help {
+      position: absolute;
+      right: 28px;
+      bottom: 24px;
+      color: #e8f8ff;
+      font-size: 12px;
+      line-height: 1.45;
+      text-align: right;
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.65);
+      pointer-events: none;
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: rgba(3, 10, 18, 0.44);
+    }
+  </style>
+</head>
+<body>
+  <div class="game-wrap">
+    <canvas id="game" width="1280" height="720"></canvas>
+    <div class="help">1 Hoops / 2 Hoops 2P / 3 Soccer<br />P1 WASD + Space<br />P2 Arrows + Enter<br />R restart</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width;
+    const H = canvas.height;
+    const keys = Object.create(null);
+    let frame = 0;
+    let state = "menu";
+    let sport = "basketball";
+    let basketballPlayers = 1;
+    let charge = 0;
+    let charging = false;
+    let chargingPlayer = null;
+    let message = "Choose a sport";
+    let messageTimer = 0;
+    let basketballAvatarSheet = null;
+    let soccerAvatarSheet = null;
+
+    const avatarImage = new Image();
+    avatarImage.src = "./assets/super-bear-sports-avatar-sheet.png";
+    const soccerAvatarImage = new Image();
+    soccerAvatarImage.src = "./assets/super-bear-sports-soccer-sheet.png";
+
+    const avatarFrames = {
+      idle: { sx: 220, sy: 330, sw: 170, sh: 310 },
+      run: { sx: 515, sy: 330, sw: 205, sh: 310 },
+      shoot: { sx: 810, sy: 348, sw: 250, sh: 292 },
+      celebrate: { sx: 1190, sy: 330, sw: 210, sh: 310 },
+    };
+
+    const game = {
+      score: 0,
+      p1Score: 0,
+      p2Score: 0,
+      combo: 0,
+      bestCombo: 0,
+      time: 60,
+      lastTick: performance.now(),
+    };
+
+    const player = {
+      x: 315,
+      y: 570,
+      vx: 0,
+      facing: 1,
+      hasBall: true,
+      walkFrame: 0,
+    };
+
+    const player2 = {
+      x: 230,
+      y: 570,
+      vx: 0,
+      facing: 1,
+      hasBall: false,
+      walkFrame: 0,
+    };
+
+    const hoop = {
+      x: 1028,
+      y: 268,
+      radius: 45,
+      rimY: 310,
+    };
+
+    const ball = {
+      x: player.x + 42,
+      y: player.y - 98,
+      vx: 0,
+      vy: 0,
+      r: 15,
+      flying: false,
+      scored: false,
+      highArc: false,
+      reloadTimer: 0,
+      shooterX: player.x,
+      shooter: null,
+    };
+
+    const soccer = {
+      score: 0,
+      saves: 0,
+      time: 60,
+      lastTick: performance.now(),
+      goalieY: 360,
+      goalieDir: 1,
+    };
+
+    const soccerBall = {
+      x: 360,
+      y: 520,
+      vx: 0,
+      vy: 0,
+      r: 16,
+      rolling: false,
+    };
+
+    const sparks = [];
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function chooseSport(nextSport, players = 1) {
+      sport = nextSport;
+      basketballPlayers = nextSport === "basketball" ? players : 1;
+      state = "start";
+      message = nextSport === "soccer" ? "Click or press Space to kick off" : "Click or press Space to start";
+      messageTimer = 9999;
+      charge = 0;
+      charging = false;
+      chargingPlayer = null;
+      player.x = nextSport === "soccer" ? 260 : players === 2 ? 260 : 315;
+      player.y = nextSport === "soccer" ? 520 : 570;
+      player.vx = 0;
+      player.facing = 1;
+      player.hasBall = nextSport === "basketball";
+      player2.x = 390;
+      player2.y = 570;
+      player2.vx = 0;
+      player2.facing = 1;
+      player2.hasBall = false;
+      ball.flying = false;
+      soccerBall.x = 360;
+      soccerBall.y = 520;
+      soccerBall.vx = 0;
+      soccerBall.vy = 0;
+      soccerBall.rolling = false;
+    }
+
+    function resetGame(players = basketballPlayers) {
+      sport = "basketball";
+      basketballPlayers = players;
+      game.score = 0;
+      game.p1Score = 0;
+      game.p2Score = 0;
+      game.combo = 0;
+      game.bestCombo = 0;
+      game.time = 60;
+      game.lastTick = performance.now();
+      player.x = players === 2 ? 260 : 315;
+      player.vx = 0;
+      player.facing = 1;
+      player.hasBall = true;
+      player2.x = 390;
+      player2.y = 570;
+      player2.vx = 0;
+      player2.facing = 1;
+      player2.hasBall = false;
+      ball.x = player.x + 42;
+      ball.y = player.y - 98;
+      ball.vx = 0;
+      ball.vy = 0;
+      ball.flying = false;
+      ball.scored = false;
+      ball.highArc = false;
+      ball.reloadTimer = 0;
+      ball.shooterX = player.x;
+      ball.shooter = null;
+      charge = 0;
+      charging = false;
+      chargingPlayer = null;
+      sparks.length = 0;
+      setMessage(players === 2 ? "P1 Space shoots - P2 Enter shoots" : "Charge the first shot", 100);
+      state = "playing";
+    }
+
+    function resetSoccerGame() {
+      sport = "soccer";
+      soccer.score = 0;
+      soccer.saves = 0;
+      soccer.time = 60;
+      soccer.lastTick = performance.now();
+      soccer.goalieY = 360;
+      soccer.goalieDir = 1;
+      player.x = 260;
+      player.y = 520;
+      player.vx = 0;
+      player.facing = 1;
+      player.hasBall = false;
+      player2.hasBall = false;
+      soccerBall.x = 360;
+      soccerBall.y = 520;
+      soccerBall.vx = 0;
+      soccerBall.vy = 0;
+      soccerBall.rolling = false;
+      charge = 0;
+      charging = false;
+      chargingPlayer = null;
+      sparks.length = 0;
+      setMessage("Dribble in and shoot", 100);
+      state = "playing";
+    }
+
+    function setMessage(text, duration = 80) {
+      message = text;
+      messageTimer = duration;
+    }
+
+    function drawOutlinedText(text, x, y, options = {}) {
+      ctx.font = options.font || "20px Trebuchet MS";
+      ctx.textAlign = options.align || "left";
+      ctx.textBaseline = options.baseline || "top";
+      ctx.fillStyle = "rgba(0,0,0,0.78)";
+      ctx.fillText(text, x + 2, y + 2);
+      ctx.fillStyle = options.color || "#ffffff";
+      ctx.fillText(text, x, y);
+    }
+
+    function makeBurst(x, y, color, count = 14) {
+      for (let i = 0; i < count; i++) {
+        sparks.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.5) * 6,
+          size: 3 + Math.random() * 5,
+          ttl: 24 + Math.random() * 22,
+          color,
+        });
+      }
+    }
+
+    function makeTransparentAvatarSheet(image) {
+      const offscreen = document.createElement("canvas");
+      offscreen.width = image.width;
+      offscreen.height = image.height;
+      const offCtx = offscreen.getContext("2d");
+      offCtx.drawImage(image, 0, 0);
+      const imageData = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
+      const { data } = imageData;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const looksLikeBackdrop =
+          r >= 42 &&
+          r <= 155 &&
+          g >= 38 &&
+          g <= 150 &&
+          b >= 18 &&
+          b <= 120 &&
+          max - min < 82 &&
+          g >= b + 10;
+
+        if (looksLikeBackdrop) data[i + 3] = 0;
+      }
+
+      offCtx.putImageData(imageData, 0, 0);
+      return offscreen;
+    }
+
+    function startCharge(shooter = player) {
+      if (state === "menu") return;
+      if (state === "start") {
+        if (sport === "soccer") resetSoccerGame();
+        else resetGame(basketballPlayers);
+        return;
+      }
+      if (sport === "soccer") {
+        kickSoccerBall();
+        return;
+      }
+      if (state !== "playing" || !shooter.hasBall) return;
+      charging = true;
+      chargingPlayer = shooter;
+    }
+
+    function releaseShot(shooter = player) {
+      if (sport === "soccer") return;
+      if (state !== "playing" || !charging || chargingPlayer !== shooter || !shooter.hasBall) {
+        if (chargingPlayer === shooter) {
+          charging = false;
+          chargingPlayer = null;
+        }
+        return;
+      }
+
+      const power = 0.92 + charge * 0.08;
+      const dx = hoop.x - shooter.x;
+      const distanceBonus = clamp((dx - 470) / 320, 0, 1);
+      ball.x = shooter.x + 42;
+      ball.y = shooter.y - 100;
+      const targetX = hoop.x + (Math.random() - 0.5) * 18;
+      const targetY = hoop.rimY - 6;
+      const shotTime = clamp((targetX - ball.x) / (9.2 + distanceBonus * 1.8), 52, 82);
+      const assistedVy = (targetY - ball.y - 0.5 * 0.36 * shotTime * shotTime) / shotTime;
+      ball.vx = (targetX - ball.x) / shotTime;
+      ball.vy = assistedVy * power;
+      ball.flying = true;
+      ball.scored = false;
+      ball.highArc = charge > 0.72;
+      ball.reloadTimer = 0;
+      ball.shooterX = shooter.x;
+      ball.shooter = shooter === player2 ? "p2" : "p1";
+      shooter.hasBall = false;
+      charging = false;
+      chargingPlayer = null;
+      charge = 0;
+    }
+
+    function scoreShot() {
+      ball.scored = true;
+      game.combo += 1;
+      game.bestCombo = Math.max(game.bestCombo, game.combo);
+      const longShot = ball.shooterX < 430;
+      const points = longShot ? 3 : 2;
+      const swish = ball.highArc && Math.abs(ball.vx) > 7.8;
+      const earnedPoints = points + (swish ? 1 : 0);
+      if (basketballPlayers === 2 && ball.shooter === "p2") {
+        game.p2Score += earnedPoints;
+      } else if (basketballPlayers === 2) {
+        game.p1Score += earnedPoints;
+      } else {
+        game.score += earnedPoints;
+      }
+      setMessage(swish ? "Swish bonus!" : longShot ? "Three points!" : "Bucket!", 70);
+      makeBurst(hoop.x, hoop.rimY, swish ? "#39ffb5" : "#ffd650", 24);
+      ball.reloadTimer = 34;
+    }
+
+    function missShot() {
+      if (!ball.scored && ball.y > H - 68) {
+        game.combo = 0;
+        setMessage("Rebound and reload", 50);
+        ball.reloadTimer = 50;
+      }
+    }
+
+    function ballCarrier() {
+      if (player.hasBall) return player;
+      if (basketballPlayers === 2 && player2.hasBall) return player2;
+      return null;
+    }
+
+    function nearestBasketballPlayer() {
+      if (basketballPlayers !== 2) return player;
+      return Math.abs(player2.x - ball.x) < Math.abs(player.x - ball.x) ? player2 : player;
+    }
+
+    function loadBallTo(receiver) {
+      player.hasBall = receiver === player;
+      player2.hasBall = basketballPlayers === 2 && receiver === player2;
+      ball.flying = false;
+      ball.vx = 0;
+      ball.vy = 0;
+      ball.x = receiver.x + 44 * receiver.facing;
+      ball.y = receiver.y - 96;
+      setMessage(receiver === player2 ? "P2 Loaded" : "P1 Loaded", 30);
+    }
+
+    function canGrabBall(grabber) {
+      const nearHands = Math.abs(grabber.x - ball.x) < 126 && Math.abs((grabber.y - 84) - ball.y) < 112;
+      const nearFeet = Math.abs(grabber.x - ball.x) < 360 && Math.abs((grabber.y + 32) - ball.y) < 150;
+      return nearHands || nearFeet;
+    }
+
+    function resetSoccerBall(afterGoal = false) {
+      soccerBall.x = afterGoal ? 360 : clamp(player.x + 58, 260, 520);
+      soccerBall.y = afterGoal ? 520 : clamp(player.y + 8, 365, 600);
+      soccerBall.vx = 0;
+      soccerBall.vy = 0;
+      soccerBall.rolling = false;
+    }
+
+    function kickSoccerBall() {
+      if (state !== "playing" || sport !== "soccer") return;
+      const dist = Math.hypot(player.x - soccerBall.x, player.y - soccerBall.y);
+      if (dist > 94) {
+        setMessage("Get close to the ball", 44);
+        return;
+      }
+
+      const aimY = 350 + Math.sin(frame * 0.09) * 74;
+      soccerBall.vx = 13.5 + Math.random() * 1.8;
+      soccerBall.vy = (aimY - soccerBall.y) * 0.035;
+      soccerBall.rolling = true;
+      player.facing = 1;
+      setMessage("Shot!", 34);
+    }
+
+    function updatePlaying(dt) {
+      game.time = Math.max(0, game.time - dt);
+      if (game.time <= 0) {
+        state = "over";
+        setMessage("Buzzer!", 9999);
+      }
+
+      const left = keys.a || (basketballPlayers === 1 && keys.arrowleft);
+      const right = keys.d || (basketballPlayers === 1 && keys.arrowright);
+      player.vx = 0;
+      if (left) player.vx -= 5.1;
+      if (right) player.vx += 5.1;
+      player.x = clamp(player.x + player.vx, 90, 1160);
+      if (player.vx !== 0) player.facing = player.vx > 0 ? 1 : -1;
+      player.walkFrame = player.vx === 0 ? 0 : Math.floor(frame / 8) % 2;
+
+      if (basketballPlayers === 2) {
+        player2.vx = 0;
+        if (keys.arrowleft) player2.vx -= 5.1;
+        if (keys.arrowright) player2.vx += 5.1;
+        player2.x = clamp(player2.x + player2.vx, 90, 1160);
+        if (player2.vx !== 0) player2.facing = player2.vx > 0 ? 1 : -1;
+        player2.walkFrame = player2.vx === 0 ? 0 : Math.floor(frame / 8) % 2;
+      }
+
+      if (charging && chargingPlayer && chargingPlayer.hasBall) {
+        charge += 0.018;
+        if (charge > 1) charge = 0.34;
+      }
+
+      if (!ballCarrier() && ball.reloadTimer > 0) {
+        ball.reloadTimer -= 1;
+        if (ball.reloadTimer <= 0) {
+          loadBallTo(nearestBasketballPlayer());
+        }
+      }
+
+      const carrier = ballCarrier();
+      if (carrier) {
+        ball.x = carrier.x + 44 * carrier.facing;
+        ball.y = carrier.y - 96 + Math.sin(frame * 0.16) * 4;
+      } else if (ball.flying) {
+          ball.vy += 0.36;
+          ball.x += ball.vx;
+          ball.y += ball.vy;
+
+        const crossingRim =
+          !ball.scored &&
+          ball.vy > 0 &&
+          ball.x > hoop.x - hoop.radius - 54 &&
+          ball.x < hoop.x + hoop.radius + 54 &&
+          ball.y > hoop.rimY - 46 &&
+          ball.y < hoop.rimY + 48;
+        if (crossingRim) scoreShot();
+
+        if (ball.x > W - 22 || ball.x < 22) ball.vx *= -0.68;
+        if (ball.y > H - 68) {
+          ball.y = H - 68;
+          ball.vy *= -0.58;
+          ball.vx *= 0.86;
+          missShot();
+          if (Math.abs(ball.vy) < 2.6) ball.flying = false;
+        }
+      } else {
+        ball.vx *= 0.94;
+        ball.x = clamp(ball.x + ball.vx, 26, W - 26);
+        if (canGrabBall(player)) {
+          loadBallTo(player);
+        } else if (basketballPlayers === 2 && canGrabBall(player2)) {
+          loadBallTo(player2);
+        }
+      }
+    }
+
+    function updateSoccer(dt) {
+      soccer.time = Math.max(0, soccer.time - dt);
+      if (soccer.time <= 0) {
+        state = "over";
+        setMessage("Full time!", 9999);
+      }
+
+      const left = keys.a || keys.arrowleft;
+      const right = keys.d || keys.arrowright;
+      const up = keys.w || keys.arrowup;
+      const down = keys.s || keys.arrowdown;
+      player.vx = 0;
+      if (left) player.vx -= 4.8;
+      if (right) player.vx += 4.8;
+      player.x = clamp(player.x + player.vx, 105, 890);
+      if (up) player.y -= 4;
+      if (down) player.y += 4;
+      player.y = clamp(player.y, 365, 600);
+      if (player.vx !== 0) player.facing = player.vx > 0 ? 1 : -1;
+      player.walkFrame = player.vx === 0 && !up && !down ? 0 : Math.floor(frame / 8) % 2;
+
+      soccer.goalieY += soccer.goalieDir * (2.7 + soccer.score * 0.05);
+      if (soccer.goalieY > 452 || soccer.goalieY < 278) soccer.goalieDir *= -1;
+
+      const dribbleDist = Math.hypot(player.x - soccerBall.x, player.y - soccerBall.y);
+      if (!soccerBall.rolling && dribbleDist < 70) {
+        soccerBall.x += player.vx * 0.9;
+        if (up) soccerBall.y -= 2.6;
+        if (down) soccerBall.y += 2.6;
+      }
+
+      soccerBall.x += soccerBall.vx;
+      soccerBall.y += soccerBall.vy;
+      soccerBall.vx *= 0.985;
+      soccerBall.vy *= 0.982;
+      soccerBall.y = clamp(soccerBall.y, 346, 625);
+      if (soccerBall.y === 346 || soccerBall.y === 625) soccerBall.vy *= -0.5;
+
+      const goalieHit =
+        soccerBall.x > 1018 &&
+        soccerBall.x < 1060 &&
+        soccerBall.y > soccer.goalieY - 62 &&
+        soccerBall.y < soccer.goalieY + 62;
+      if (goalieHit) {
+        soccer.saves += 1;
+        soccerBall.vx = -8;
+        soccerBall.vy += (soccerBall.y - soccer.goalieY) * 0.045;
+        soccerBall.rolling = true;
+        setMessage("Saved!", 50);
+        makeBurst(1034, soccerBall.y, "#8fefff", 12);
+      }
+
+      const scored =
+        soccerBall.x > 1128 &&
+        soccerBall.y > 286 &&
+        soccerBall.y < 454;
+      if (scored) {
+        soccer.score += 1;
+        setMessage("Goal!", 70);
+        makeBurst(1138, soccerBall.y, "#ffd650", 26);
+        resetSoccerBall(true);
+      }
+
+      if (soccerBall.x < 54 || soccerBall.x > W + 60 || Math.abs(soccerBall.vx) < 0.08 && soccerBall.rolling) {
+        resetSoccerBall(false);
+      }
+    }
+
+    function update() {
+      frame += 1;
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - game.lastTick) / 1000);
+      game.lastTick = now;
+      if (messageTimer > 0) messageTimer -= 1;
+
+      if (state === "playing") {
+        if (sport === "soccer") updateSoccer(dt);
+        else updatePlaying(dt);
+      }
+
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const p = sparks[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.12;
+        p.ttl -= 1;
+        if (p.ttl <= 0) sparks.splice(i, 1);
+      }
+    }
+
+    function drawCourt() {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#142f55");
+      sky.addColorStop(0.55, "#111a30");
+      sky.addColorStop(1, "#08101d");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      for (let i = 0; i < 36; i++) {
+        ctx.fillStyle = i % 3 === 0 ? "#ffe27b" : "#8fefff";
+        ctx.globalAlpha = 0.25 + (i % 5) * 0.08;
+        ctx.fillRect((i * 57 + frame * 0.2) % W, 36 + (i * 37) % 150, 3, 3);
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = "#1c7f6f";
+      ctx.fillRect(0, 468, W, 252);
+      ctx.fillStyle = "#d68b38";
+      ctx.fillRect(0, 520, W, 200);
+      ctx.strokeStyle = "rgba(255,255,255,0.72)";
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(0, 588);
+      ctx.lineTo(W, 588);
+      ctx.stroke();
+      ctx.strokeRect(822, 390, 330, 260);
+      ctx.beginPath();
+      ctx.arc(822, 585, 132, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(420, 590, 74, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = "#22344f";
+      ctx.fillRect(1088, 150, 16, 295);
+      ctx.fillStyle = "#e7f6ff";
+      ctx.fillRect(960, 190, 152, 94);
+      ctx.fillStyle = "#314867";
+      ctx.fillRect(978, 207, 116, 60);
+      ctx.strokeStyle = "#ff6b2a";
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.ellipse(hoop.x, hoop.rimY, hoop.radius, 13, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(255,255,255,0.62)";
+      for (let i = -3; i <= 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(hoop.x + i * 12, hoop.rimY + 9);
+        ctx.lineTo(hoop.x + i * 6, hoop.rimY + 72);
+        ctx.stroke();
+      }
+    }
+
+    function drawSoccerField() {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, "#163956");
+      sky.addColorStop(0.55, "#122737");
+      sky.addColorStop(1, "#071018");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      for (let i = 0; i < 34; i++) {
+        ctx.fillStyle = i % 2 ? "#dff7ff" : "#ffd650";
+        ctx.globalAlpha = 0.18 + (i % 4) * 0.07;
+        ctx.fillRect((i * 61 + frame * 0.16) % W, 42 + (i * 31) % 150, 3, 3);
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = "#126242";
+      ctx.fillRect(0, 340, W, 380);
+      for (let i = 0; i < 8; i++) {
+        ctx.fillStyle = i % 2 ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.08)";
+        ctx.fillRect(i * 160, 340, 160, 380);
+      }
+
+      ctx.strokeStyle = "rgba(255,255,255,0.78)";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(70, 365, 1040, 280);
+      ctx.beginPath();
+      ctx.moveTo(W / 2, 365);
+      ctx.lineTo(W / 2, 645);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(W / 2, 505, 76, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeRect(910, 420, 200, 170);
+      ctx.strokeRect(1010, 286, 120, 168);
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = "#dff7ff";
+      ctx.fillRect(1130, 286, 18, 168);
+      ctx.fillRect(1040, 286, 100, 10);
+      ctx.fillRect(1040, 444, 100, 10);
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 7; i++) {
+        const y = 300 + i * 22;
+        ctx.beginPath();
+        ctx.moveTo(1040, y);
+        ctx.lineTo(1130, y + 8);
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = "#8fefff";
+      ctx.fillRect(1018, soccer.goalieY - 58, 26, 116);
+      ctx.fillStyle = "#071018";
+      ctx.fillRect(1024, soccer.goalieY - 40, 14, 80);
+    }
+
+    function drawSoccerBall() {
+      ctx.save();
+      ctx.translate(soccerBall.x, soccerBall.y);
+      ctx.rotate(frame * 0.1);
+      ctx.fillStyle = "#f8fbff";
+      ctx.beginPath();
+      ctx.arc(0, 0, soccerBall.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#0c1018";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, soccerBall.r - 1, 0, Math.PI * 2);
+      ctx.moveTo(-8, -10);
+      ctx.lineTo(8, 10);
+      ctx.moveTo(9, -9);
+      ctx.lineTo(-9, 9);
+      ctx.stroke();
+      ctx.fillStyle = "#0c1018";
+      ctx.fillRect(-4, -4, 8, 8);
+      ctx.restore();
+    }
+
+    function drawFallbackBear() {
+      const x = Math.round(player.x);
+      const y = Math.round(player.y);
+      const stride = player.walkFrame === 1 ? 6 : -2;
+      ctx.save();
+      if (player.facing < 0) {
+        ctx.translate(x, y);
+        ctx.scale(-1, 1);
+        ctx.translate(-x, -y);
+      }
+
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.beginPath();
+      ctx.ellipse(x, y + 16, 60, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#8f5830";
+      ctx.fillRect(x - 28, y - 118, 56, 58);
+      ctx.fillRect(x - 34, y - 104, 68, 42);
+      ctx.fillStyle = "#f3b15e";
+      ctx.fillRect(x - 20, y - 110, 40, 36);
+      ctx.fillStyle = "#8f5830";
+      ctx.fillRect(x - 45, y - 148, 24, 24);
+      ctx.fillRect(x + 21, y - 148, 24, 24);
+      ctx.fillRect(x - 39, y - 140, 78, 58);
+      ctx.fillStyle = "#f0c18d";
+      ctx.fillRect(x - 20, y - 116, 40, 22);
+      ctx.fillStyle = "#10151f";
+      ctx.fillRect(x - 17, y - 128, 8, 10);
+      ctx.fillRect(x + 9, y - 128, 8, 10);
+      ctx.fillRect(x - 5, y - 112, 10, 6);
+      ctx.fillRect(x - 14, y - 96, 28, 4);
+
+      ctx.fillStyle = "#39eaff";
+      ctx.fillRect(x - 32, y - 66, 64, 42);
+      ctx.fillStyle = "#10151f";
+      ctx.font = "bold 24px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.fillText("1", x, y - 35);
+      ctx.fillStyle = "#f53f42";
+      ctx.fillRect(x - 47, y - 64, 18, 44);
+      ctx.fillRect(x + 29, y - 64, 18, 44);
+      ctx.fillStyle = "#2230a5";
+      ctx.fillRect(x - 29, y - 24, 24, 48);
+      ctx.fillRect(x + 5, y - 24, 24, 48);
+      ctx.fillStyle = "#f8fbff";
+      ctx.fillRect(x - 33 + stride, y + 20, 34, 11);
+      ctx.fillRect(x + 5 - stride, y + 20, 34, 11);
+      ctx.restore();
+    }
+
+    function drawBearFor(targetPlayer, label) {
+      const currentSheet = sport === "soccer" ? soccerAvatarSheet : basketballAvatarSheet;
+      if (!currentSheet) {
+        drawFallbackBear();
+        return;
+      }
+
+      const x = Math.round(targetPlayer.x);
+      const y = Math.round(targetPlayer.y);
+      const isMoving = Math.abs(targetPlayer.vx) > 0.1;
+      let pose = isMoving ? "run" : "idle";
+      if ((charging && targetPlayer.hasBall) || (sport === "soccer" && message === "Shot!")) pose = "shoot";
+      if (messageTimer > 0 && (message === "Bucket!" || message === "Three points!" || message === "Swish bonus!" || message === "Goal!")) {
+        pose = "celebrate";
+      }
+
+      const source = avatarFrames[pose];
+      const drawHeight = pose === "shoot" ? 160 : 178;
+      const drawWidth = drawHeight * (source.sw / source.sh);
+      const drawX = x - drawWidth / 2;
+      const drawY = y - drawHeight + 30;
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.fillStyle = "rgba(0,0,0,0.26)";
+      ctx.beginPath();
+      ctx.ellipse(x, y + 18, 58, 15, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (targetPlayer.facing < 0) {
+        ctx.translate(x, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(
+          currentSheet,
+          source.sx,
+          source.sy,
+          source.sw,
+          source.sh,
+          -drawWidth / 2,
+          drawY,
+          drawWidth,
+          drawHeight
+        );
+      } else {
+        ctx.drawImage(
+          currentSheet,
+          source.sx,
+          source.sy,
+          source.sw,
+          source.sh,
+          drawX,
+          drawY,
+          drawWidth,
+          drawHeight
+        );
+      }
+
+      if (basketballPlayers === 2 && sport === "basketball") {
+        ctx.font = "bold 18px Trebuchet MS";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "rgba(0,0,0,0.75)";
+        ctx.fillText(label, x + 2, y - drawHeight + 18);
+        ctx.fillStyle = label === "P1" ? "#39ffb5" : "#ffd650";
+        ctx.fillText(label, x, y - drawHeight + 16);
+      }
+
+      ctx.restore();
+    }
+
+    function drawBear() {
+      drawBearFor(player, "P1");
+      if (sport === "basketball" && basketballPlayers === 2) {
+        drawBearFor(player2, "P2");
+      }
+    }
+
+    function drawBall() {
+      ctx.save();
+      ctx.translate(ball.x, ball.y);
+      ctx.rotate(frame * 0.08);
+      ctx.fillStyle = "#f28b2d";
+      ctx.beginPath();
+      ctx.arc(0, 0, ball.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#5b2a10";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, ball.r - 1, 0, Math.PI * 2);
+      ctx.moveTo(-ball.r, 0);
+      ctx.lineTo(ball.r, 0);
+      ctx.moveTo(0, -ball.r);
+      ctx.lineTo(0, ball.r);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawHud() {
+      if (sport === "soccer") {
+        drawSoccerHud();
+        return;
+      }
+
+      ctx.fillStyle = "rgba(2,8,16,0.68)";
+      ctx.fillRect(22, 18, 390, 126);
+      ctx.fillRect(W - 318, 18, 290, 104);
+      drawOutlinedText("Super Bear Sports", 42, 32, { font: "bold 28px Trebuchet MS" });
+      drawOutlinedText("Basketball", 42, 64, { font: "18px Trebuchet MS", color: "#8fefff" });
+      if (basketballPlayers === 2) {
+        drawOutlinedText("P1: " + game.p1Score, W - 190, 30, { font: "bold 24px Trebuchet MS", align: "right", color: "#39ffb5" });
+        drawOutlinedText("P2: " + game.p2Score, W - 48, 30, { font: "bold 24px Trebuchet MS", align: "right", color: "#ffd650" });
+        drawOutlinedText("Time: " + Math.ceil(game.time), W - 48, 62, { font: "20px Trebuchet MS", align: "right", color: "#ffffff" });
+        const leader =
+          game.p1Score === game.p2Score
+            ? "Tied"
+            : game.p1Score > game.p2Score
+              ? "P1 leads"
+              : "P2 leads";
+        drawOutlinedText(leader, W - 48, 88, { font: "18px Trebuchet MS", align: "right", color: "#8fefff" });
+      } else {
+        drawOutlinedText("Score: " + game.score, W - 48, 30, { font: "bold 26px Trebuchet MS", align: "right", color: "#ffd650" });
+        drawOutlinedText("Time: " + Math.ceil(game.time), W - 48, 62, { font: "20px Trebuchet MS", align: "right", color: "#ffffff" });
+        drawOutlinedText("Combo: " + game.combo, W - 48, 88, { font: "18px Trebuchet MS", align: "right", color: "#39ffb5" });
+      }
+
+      if (ballCarrier()) {
+        ctx.fillStyle = "rgba(255,255,255,0.14)";
+        ctx.fillRect(42, 104, 220, 18);
+        ctx.fillStyle = charge > 0.72 ? "#39ffb5" : "#ffd650";
+        ctx.fillRect(42, 104, 220 * charge, 18);
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.strokeRect(42, 104, 220, 18);
+      }
+
+      if (messageTimer > 0 || state !== "playing") {
+        drawOutlinedText(message, W / 2, 48, { font: "bold 30px Trebuchet MS", align: "center", color: "#fff2a8" });
+      }
+
+      if (basketballPlayers === 2) {
+        drawOutlinedText("P1: WASD + Space", 42, 132, { font: "16px Trebuchet MS", color: "#39ffb5" });
+        drawOutlinedText("P2: Arrows + Enter", 226, 132, { font: "16px Trebuchet MS", color: "#ffd650" });
+      }
+    }
+
+    function drawSoccerHud() {
+      ctx.fillStyle = "rgba(2,8,16,0.68)";
+      ctx.fillRect(22, 18, 390, 126);
+      ctx.fillRect(W - 318, 18, 290, 104);
+      drawOutlinedText("Super Bear Sports", 42, 32, { font: "bold 28px Trebuchet MS" });
+      drawOutlinedText("Soccer", 42, 64, { font: "18px Trebuchet MS", color: "#8fefff" });
+      drawOutlinedText("Space kicks when close", 42, 100, { font: "17px Trebuchet MS", color: "#dff9ff" });
+      drawOutlinedText("Goals: " + soccer.score, W - 48, 30, { font: "bold 26px Trebuchet MS", align: "right", color: "#ffd650" });
+      drawOutlinedText("Time: " + Math.ceil(soccer.time), W - 48, 62, { font: "20px Trebuchet MS", align: "right", color: "#ffffff" });
+      drawOutlinedText("Saves: " + soccer.saves, W - 48, 88, { font: "18px Trebuchet MS", align: "right", color: "#8fefff" });
+
+      if (messageTimer > 0 || state !== "playing") {
+        drawOutlinedText(message, W / 2, 48, { font: "bold 30px Trebuchet MS", align: "center", color: "#fff2a8" });
+      }
+    }
+
+    function drawPanels() {
+      if (state === "menu") {
+        ctx.fillStyle = "rgba(0,0,0,0.58)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Super Bear Sports", W / 2, H / 2 - 120, { font: "bold 58px Trebuchet MS", align: "center" });
+        drawOutlinedText("Choose a mini game", W / 2, H / 2 - 58, { font: "28px Trebuchet MS", align: "center", color: "#dff9ff" });
+
+        ctx.fillStyle = "rgba(5,12,22,0.82)";
+        ctx.fillRect(W / 2 - 480, H / 2 - 8, 288, 142);
+        ctx.fillRect(W / 2 - 144, H / 2 - 8, 288, 142);
+        ctx.fillRect(W / 2 + 192, H / 2 - 8, 288, 142);
+        ctx.strokeStyle = "#39ffb5";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(W / 2 - 480, H / 2 - 8, 288, 142);
+        ctx.strokeStyle = "#8fefff";
+        ctx.strokeRect(W / 2 - 144, H / 2 - 8, 288, 142);
+        ctx.strokeStyle = "#ffd650";
+        ctx.strokeRect(W / 2 + 192, H / 2 - 8, 288, 142);
+        ctx.lineWidth = 1;
+
+        drawOutlinedText("1", W / 2 - 448, H / 2 + 24, { font: "bold 30px Trebuchet MS", color: "#39ffb5" });
+        drawOutlinedText("Basketball", W / 2 - 336, H / 2 + 20, { font: "bold 30px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("1 player", W / 2 - 336, H / 2 + 72, { font: "20px Trebuchet MS", align: "center", color: "#dff9ff" });
+        drawOutlinedText("2", W / 2 - 112, H / 2 + 24, { font: "bold 30px Trebuchet MS", color: "#8fefff" });
+        drawOutlinedText("Basketball", W / 2, H / 2 + 14, { font: "bold 30px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("2 players", W / 2, H / 2 + 72, { font: "20px Trebuchet MS", align: "center", color: "#dff9ff" });
+        drawOutlinedText("3", W / 2 + 224, H / 2 + 24, { font: "bold 30px Trebuchet MS", color: "#ffd650" });
+        drawOutlinedText("Soccer", W / 2 + 336, H / 2 + 20, { font: "bold 30px Trebuchet MS", align: "center", color: "#ffffff" });
+        drawOutlinedText("Kick past goalie", W / 2 + 336, H / 2 + 72, { font: "20px Trebuchet MS", align: "center", color: "#dff9ff" });
+      }
+
+      if (state === "start") {
+        ctx.fillStyle = "rgba(0,0,0,0.58)";
+        ctx.fillRect(0, 0, W, H);
+        drawOutlinedText("Super Bear Sports", W / 2, H / 2 - 72, { font: "bold 56px Trebuchet MS", align: "center" });
+        drawOutlinedText(sport === "soccer" ? "Soccer" : basketballPlayers === 2 ? "Basketball 2 Player" : "Basketball", W / 2, H / 2 - 16, { font: "bold 38px Trebuchet MS", align: "center", color: "#ffd650" });
+        drawOutlinedText(
+          sport === "soccer" ? "Move to the ball, then press Space to kick" : basketballPlayers === 2 ? "P1: WASD + Space    P2: Arrows + Enter" : "Hold Space to charge, release to shoot",
+          W / 2,
+          H / 2 + 42,
+          { font: "24px Trebuchet MS", align: "center", color: "#dff9ff" }
+        );
+      }
+
+      if (state === "over") {
+        ctx.fillStyle = "rgba(0,0,0,0.64)";
+        ctx.fillRect(0, 0, W, H);
+        const finalScore = sport === "soccer" ? soccer.score : basketballPlayers === 2 ? game.p1Score + " - " + game.p2Score : game.score;
+        const statLine = sport === "soccer" ? "Goalie saves: " + soccer.saves : "Best combo: " + game.bestCombo;
+        const winner =
+          basketballPlayers !== 2
+            ? statLine
+            : game.p1Score === game.p2Score
+              ? "Tie game"
+              : game.p1Score > game.p2Score
+                ? "P1 wins"
+                : "P2 wins";
+        drawOutlinedText(basketballPlayers === 2 ? "Final: P1 " + finalScore + " P2" : "Final Score: " + finalScore, W / 2, H / 2 - 58, { font: "bold 48px Trebuchet MS", align: "center", color: "#ffd650" });
+        drawOutlinedText(winner, W / 2, H / 2 - 8, { font: "28px Trebuchet MS", align: "center", color: "#39ffb5" });
+        drawOutlinedText("Press R to run it back", W / 2, H / 2 + 42, { font: "24px Trebuchet MS", align: "center" });
+      }
+    }
+
+    function draw() {
+      if (sport === "soccer") drawSoccerField();
+      else drawCourt();
+      for (const p of sparks) {
+        ctx.globalAlpha = Math.max(0, p.ttl / 46);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+      }
+      ctx.globalAlpha = 1;
+      drawBear();
+      if (sport === "soccer") drawSoccerBall();
+      else drawBall();
+      drawHud();
+      drawPanels();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      keys[event.key.toLowerCase()] = true;
+      if (state === "menu") {
+        if (event.key === "1") chooseSport("basketball", 1);
+        if (event.key === "2") chooseSport("basketball", 2);
+        if (event.key === "3") chooseSport("soccer");
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        startCharge(player);
+      }
+      if (event.key === "Enter" && sport === "basketball" && basketballPlayers === 2) {
+        event.preventDefault();
+        startCharge(player2);
+      }
+      if (event.key.toLowerCase() === "r" && state !== "playing") {
+        if (sport === "soccer") resetSoccerGame();
+        else resetGame(basketballPlayers);
+      }
+      if (event.key === "Escape") window.location.href = "/games/super-bear-sports";
+    });
+
+    window.addEventListener("keyup", (event) => {
+      keys[event.key.toLowerCase()] = false;
+      if (event.code === "Space") releaseShot(player);
+      if (event.key === "Enter") releaseShot(player2);
+    });
+
+    canvas.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) return;
+      if (state === "menu") {
+        const rect = canvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+        if (x < W / 3) chooseSport("basketball", 1);
+        else if (x < (W * 2) / 3) chooseSport("basketball", 2);
+        else chooseSport("soccer");
+        return;
+      }
+      startCharge(player);
+    });
+
+    canvas.addEventListener("mouseup", (event) => {
+      if (event.button === 0) releaseShot(player);
+    });
+
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+    avatarImage.onload = () => {
+      basketballAvatarSheet = makeTransparentAvatarSheet(avatarImage);
+    };
+
+    soccerAvatarImage.onload = () => {
+      soccerAvatarSheet = makeTransparentAvatarSheet(soccerAvatarImage);
+    };
+
+    loop();
+  </script>
+</body>
+</html>
