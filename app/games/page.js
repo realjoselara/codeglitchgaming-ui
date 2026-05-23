@@ -3,6 +3,14 @@ import "./games.css";
 
 const GAMES = [
   {
+    slug: "super-bear-last-hero",
+    title: "Super Bear: Last Hero",
+    status: "New survival",
+    description:
+      "A top-down last-hero survival arena where Super Bear rescues civilians, fights corrupted heroes, and tries to control a rising corruption meter.",
+    highlights: ["Wave survival", "Rescues", "Dark Super Bear"],
+  },
+  {
     slug: "super-bear-sports",
     title: "Super Bear Sports",
     status: "New sport",
@@ -76,21 +84,25 @@ export default function GamesPage() {
         <section className="games-feature" aria-label="Featured game">
           <div className="games-feature-card">
             <p className="games-panel-label">Featured Drop</p>
-            <h2>Super Bear Sports</h2>
+            <h2>Super Bear: Last Hero</h2>
             <p className="games-copy">
-              Pick basketball or soccer, then charge jumpers, kick past the
-              goalie, and chase a high score before the buzzer.
+              Everyone in the world became evil except Super Bear. Survive
+              corrupted hero waves, rescue civilians, and resist the corruption
+              meter before Dark Super Bear takes over.
             </p>
             <div className="games-chip-row">
-              <span className="games-chip">Basketball</span>
-              <span className="games-chip">Soccer</span>
-              <span className="games-chip">Buzzer runs</span>
+              <span className="games-chip">Wave survival</span>
+              <span className="games-chip">Civilian rescues</span>
+              <span className="games-chip">Corruption meter</span>
             </div>
             <div className="games-actions">
               <Link
                 className="games-link games-link-primary"
-                href="/games/super-bear-sports"
+                href="/games/super-bear-last-hero"
               >
+                Play Last Hero
+              </Link>
+              <Link className="games-link" href="/games/super-bear-sports">
                 Play Sports
               </Link>
               <Link
@@ -110,7 +122,7 @@ export default function GamesPage() {
               </Link>
               <a
                 className="games-link"
-                href="/games/super-bear-sports/index.html"
+                href="/games/super-bear-last-hero/index.html"
                 target="_blank"
                 rel="noreferrer"
               >

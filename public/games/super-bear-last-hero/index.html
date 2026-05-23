@@ -1,0 +1,885 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Super Bear: Last Hero</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #050611;
+      color: #fff8e8;
+      font-family: "Trebuchet MS", system-ui, sans-serif;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    .game-shell {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      padding: 10px;
+      box-sizing: border-box;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 22% 18%, rgba(255, 213, 87, 0.2), transparent 25%),
+        radial-gradient(circle at 82% 18%, rgba(226, 37, 78, 0.2), transparent 24%),
+        radial-gradient(circle at 50% 100%, rgba(31, 201, 255, 0.14), transparent 32%),
+        linear-gradient(180deg, #060713, #120817 54%, #080b16);
+    }
+
+    canvas {
+      display: block;
+      width: min(calc(100vw - 20px), calc((100vh - 20px) * 16 / 9));
+      height: min(calc(100vh - 20px), calc((100vw - 20px) * 9 / 16));
+      border: 6px solid #04050d;
+      border-radius: 18px;
+      background: #10121f;
+      box-shadow: 0 22px 80px rgba(0, 0, 0, 0.55);
+      image-rendering: pixelated;
+    }
+
+    .help {
+      position: absolute;
+      left: max(24px, calc((100vw - min(calc(100vw - 20px), calc((100vh - 20px) * 16 / 9))) / 2 + 24px));
+      bottom: max(20px, calc((100vh - min(calc(100vh - 20px), calc((100vw - 20px) * 9 / 16))) / 2 + 20px));
+      max-width: 330px;
+      padding: 9px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 10px;
+      background: rgba(4, 5, 13, 0.72);
+      color: #ffe9b8;
+      font-size: 12px;
+      line-height: 1.45;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-shell">
+    <canvas id="game" width="1280" height="720"></canvas>
+    <div class="help">Move: WASD / arrows &nbsp; Aim: mouse &nbsp; Punch: left click / J<br />Dash: Space &nbsp; Rescue civilians by touching them &nbsp; Restart: R</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width;
+    const H = canvas.height;
+    const keys = Object.create(null);
+    const mouse = { x: W / 2, y: H / 2, down: false };
+    const assets = {
+      superBearSheet: new Image(),
+      superBearCanvas: null,
+    };
+    assets.superBearSheet.src = "./assets/super-bear-sheet-v3.png";
+    assets.superBearSheet.onload = () => {
+      assets.superBearCanvas = stripLightBackground(assets.superBearSheet);
+    };
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const rand = (min, max) => Math.random() * (max - min) + min;
+    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+    function stripLightBackground(image) {
+      const offscreen = document.createElement("canvas");
+      offscreen.width = image.width;
+      offscreen.height = image.height;
+      const offCtx = offscreen.getContext("2d");
+      offCtx.drawImage(image, 0, 0);
+      const imageData = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
+      const { data } = imageData;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const red = data[i];
+        const green = data[i + 1];
+        const blue = data[i + 2];
+        if (red > 210 && green > 210 && blue > 210) {
+          data[i + 3] = 0;
+        }
+      }
+
+      offCtx.putImageData(imageData, 0, 0);
+      return offscreen;
+    }
+
+    let frame = 0;
+    let state;
+
+    const heroNames = [
+      "Captain Comet",
+      "Glitch Knight",
+      "Bolt Belle",
+      "Mega Mantis",
+      "Iron Owl",
+      "Solar Kid",
+      "Nova Ace",
+      "The Shield",
+    ];
+
+    function resetGame() {
+      state = {
+        mode: "intro",
+        wave: 1,
+        score: 0,
+        rescued: 0,
+        spawnTimer: 0,
+        civiliansToSpawn: 3,
+        waveClearedTimer: 0,
+        shake: 0,
+        particles: [],
+        blasts: [],
+        enemies: [],
+        civilians: [],
+        player: {
+          x: W / 2,
+          y: H / 2,
+          r: 23,
+          hp: 100,
+          maxHp: 100,
+          speed: 4,
+          corruption: 0,
+          darkTimer: 0,
+          dashTimer: 0,
+          dashCooldown: 0,
+          attackCooldown: 0,
+          invuln: 0,
+          facing: 0,
+        },
+      };
+    }
+
+    function startWave() {
+      state.spawnTimer = 20;
+      state.civiliansToSpawn = Math.min(6, 2 + state.wave);
+      state.waveClearedTimer = 0;
+      state.enemies.length = 0;
+      state.civilians.length = 0;
+      for (let i = 0; i < state.civiliansToSpawn; i++) {
+        spawnCivilian();
+      }
+    }
+
+    function spawnCivilian() {
+      state.civilians.push({
+        x: rand(80, W - 80),
+        y: rand(112, H - 86),
+        r: 14,
+        panic: rand(0, Math.PI * 2),
+        saved: false,
+      });
+    }
+
+    function spawnEnemy() {
+      const side = Math.floor(rand(0, 4));
+      const pos = [
+        { x: -40, y: rand(120, H - 70) },
+        { x: W + 40, y: rand(120, H - 70) },
+        { x: rand(60, W - 60), y: -40 },
+        { x: rand(60, W - 60), y: H + 40 },
+      ][side];
+      const typeRoll = Math.random();
+      const type = state.wave >= 4 && typeRoll > 0.74 ? "brute" : state.wave >= 2 && typeRoll > 0.48 ? "ranger" : "charger";
+      const baseHp = type === "brute" ? 70 : type === "ranger" ? 40 : 46;
+      state.enemies.push({
+        ...pos,
+        type,
+        name: heroNames[Math.floor(rand(0, heroNames.length))],
+        r: type === "brute" ? 25 : 19,
+        hp: baseHp + state.wave * 8,
+        maxHp: baseHp + state.wave * 8,
+        speed: (type === "brute" ? 1.2 : type === "ranger" ? 1.55 : 2.05) + state.wave * 0.04,
+        attackTimer: rand(10, 60),
+        stun: 0,
+      });
+    }
+
+    function addBurst(x, y, color, count = 16, power = 3) {
+      for (let i = 0; i < count; i++) {
+        const a = rand(0, Math.PI * 2);
+        const s = rand(0.8, power);
+        state.particles.push({
+          x,
+          y,
+          vx: Math.cos(a) * s,
+          vy: Math.sin(a) * s,
+          life: rand(18, 38),
+          maxLife: 38,
+          color,
+          size: rand(2, 6),
+        });
+      }
+    }
+
+    function enterDarkMode() {
+      const player = state.player;
+      player.darkTimer = 520;
+      player.corruption = 100;
+      player.hp = Math.min(player.maxHp, player.hp + 28);
+      state.shake = 20;
+      addBurst(player.x, player.y, "#f41f63", 52, 8);
+    }
+
+    function leaveDarkMode() {
+      const player = state.player;
+      player.darkTimer = 0;
+      player.corruption = 36;
+      addBurst(player.x, player.y, "#ffd957", 34, 5);
+    }
+
+    function attack() {
+      const player = state.player;
+      if (player.attackCooldown > 0) return;
+      const isDark = player.darkTimer > 0;
+      const range = isDark ? 96 : 70;
+      const damage = isDark ? 58 : 30;
+      player.attackCooldown = isDark ? 11 : 17;
+      state.shake = isDark ? 8 : 4;
+      addBurst(player.x + Math.cos(player.facing) * 36, player.y + Math.sin(player.facing) * 36, isDark ? "#f41f63" : "#ffe06a", 10, 3.2);
+
+      for (const enemy of state.enemies) {
+        const angleToEnemy = Math.atan2(enemy.y - player.y, enemy.x - player.x);
+        let angleDiff = Math.atan2(Math.sin(angleToEnemy - player.facing), Math.cos(angleToEnemy - player.facing));
+        if (dist(player, enemy) < range + enemy.r && Math.abs(angleDiff) < 1.05) {
+          enemy.hp -= damage;
+          enemy.stun = 12;
+          enemy.x += Math.cos(player.facing) * (isDark ? 24 : 14);
+          enemy.y += Math.sin(player.facing) * (isDark ? 24 : 14);
+          addBurst(enemy.x, enemy.y, isDark ? "#ff2b76" : "#fff2a0", 12, 4);
+        }
+      }
+
+      if (isDark) {
+        state.blasts.push({
+          x: player.x,
+          y: player.y,
+          vx: Math.cos(player.facing) * 9,
+          vy: Math.sin(player.facing) * 9,
+          r: 12,
+          life: 42,
+        });
+      }
+    }
+
+    function damagePlayer(amount) {
+      const player = state.player;
+      if (player.invuln > 0 || player.darkTimer > 0) return;
+      player.hp -= amount;
+      player.invuln = 34;
+      player.corruption = clamp(player.corruption + 3, 0, 100);
+      state.shake = 12;
+      addBurst(player.x, player.y, "#ff335f", 18, 5);
+      if (player.hp <= 0) {
+        state.mode = "gameover";
+      }
+    }
+
+    function defeatEnemy(enemy) {
+      const player = state.player;
+      state.score += enemy.type === "brute" ? 180 : enemy.type === "ranger" ? 140 : 110;
+      player.corruption = clamp(player.corruption + (enemy.type === "brute" ? 13 : 9), 0, 100);
+      addBurst(enemy.x, enemy.y, "#6df7ff", 24, 5.5);
+      if (player.corruption >= 100 && player.darkTimer <= 0) {
+        enterDarkMode();
+      }
+    }
+
+    function rescueCivilian(civilian) {
+      civilian.saved = true;
+      state.rescued += 1;
+      state.score += 250;
+      state.player.hp = Math.min(state.player.maxHp, state.player.hp + 8);
+      state.player.corruption = clamp(state.player.corruption - 5, 0, 100);
+      addBurst(civilian.x, civilian.y, "#5dff9c", 22, 4.2);
+    }
+
+    function spriteFrame(sheet, index) {
+      const frameWidth = sheet.width / 4;
+      return {
+        sx: frameWidth * index,
+        sy: 0,
+        sw: frameWidth,
+        sh: sheet.height,
+      };
+    }
+
+    function croppedSpriteFrame(sheet, index) {
+      if (!sheet.lastHeroCrops) {
+        const frameWidth = sheet.width / 4;
+        const offscreen = document.createElement("canvas");
+        offscreen.width = sheet.width;
+        offscreen.height = sheet.height;
+        const offCtx = offscreen.getContext("2d");
+        offCtx.drawImage(sheet, 0, 0);
+        const imageData = offCtx.getImageData(0, 0, sheet.width, sheet.height);
+        const { data } = imageData;
+
+        sheet.lastHeroCrops = Array.from({ length: 4 }, (_, frameIndex) => {
+          const frameLeft = Math.floor(frameWidth * frameIndex);
+          const frameRight = Math.floor(frameLeft + frameWidth);
+          let minX = frameRight;
+          let minY = sheet.height;
+          let maxX = frameLeft;
+          let maxY = 0;
+
+          for (let y = 0; y < sheet.height; y++) {
+            for (let x = frameLeft; x < frameRight; x++) {
+              const alpha = data[(y * sheet.width + x) * 4 + 3];
+              if (alpha > 24) {
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+              }
+            }
+          }
+
+          if (minX > maxX || minY > maxY) {
+            return spriteFrame(sheet, frameIndex);
+          }
+
+          const pad = 8;
+          return {
+            sx: clamp(minX - pad, frameLeft, frameRight),
+            sy: clamp(minY - pad, 0, sheet.height),
+            sw: clamp(maxX - minX + pad * 2, 1, frameWidth),
+            sh: clamp(maxY - minY + pad * 2, 1, sheet.height),
+          };
+        });
+      }
+
+      return sheet.lastHeroCrops[index];
+    }
+
+    function drawSuperBearSprite(x, y, frameIndex, flip = false, isDark = false, alpha = 1, width = 112) {
+      if (!assets.superBearSheet.complete || !assets.superBearSheet.naturalWidth) {
+        return false;
+      }
+
+      const sheet = assets.superBearCanvas || assets.superBearSheet;
+      const { sx, sy, sw, sh } = croppedSpriteFrame(sheet, frameIndex);
+      const height = Math.round(width * (sh / sw));
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.imageSmoothingEnabled = false;
+      ctx.translate(x, y - 12);
+      if (flip) ctx.scale(-1, 1);
+      ctx.drawImage(sheet, sx, sy, sw, sh, -width / 2, -height / 2, width, height);
+
+      if (isDark) {
+        ctx.globalCompositeOperation = "source-atop";
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = "#3a0824";
+        ctx.fillRect(-width / 2, -height / 2, width, height);
+        ctx.globalCompositeOperation = "screen";
+        ctx.globalAlpha = 0.42 + Math.sin(frame * 0.18) * 0.1;
+        ctx.fillStyle = "#ff1d66";
+        ctx.fillRect(-width / 2, -height / 2, width, height);
+      }
+
+      ctx.restore();
+      return true;
+    }
+
+    function updatePlayer() {
+      const player = state.player;
+      let dx = 0;
+      let dy = 0;
+      if (keys.KeyA || keys.ArrowLeft) dx -= 1;
+      if (keys.KeyD || keys.ArrowRight) dx += 1;
+      if (keys.KeyW || keys.ArrowUp) dy -= 1;
+      if (keys.KeyS || keys.ArrowDown) dy += 1;
+      const mag = Math.hypot(dx, dy) || 1;
+      const isDark = player.darkTimer > 0;
+
+      if ((keys.Space || keys.ShiftLeft) && player.dashCooldown <= 0) {
+        player.dashTimer = 10;
+        player.dashCooldown = 64;
+        player.invuln = Math.max(player.invuln, 10);
+        addBurst(player.x, player.y, isDark ? "#ff2b76" : "#7cf5ff", 14, 4);
+      }
+
+      const dashBoost = player.dashTimer > 0 ? 3.1 : 1;
+      const speed = (isDark ? 5.05 : player.speed) * dashBoost;
+      player.x = clamp(player.x + (dx / mag) * speed, 42, W - 42);
+      player.y = clamp(player.y + (dy / mag) * speed, 108, H - 46);
+      player.facing = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+
+      if (mouse.down || keys.KeyJ || keys.KeyK) attack();
+
+      player.attackCooldown = Math.max(0, player.attackCooldown - 1);
+      player.dashTimer = Math.max(0, player.dashTimer - 1);
+      player.dashCooldown = Math.max(0, player.dashCooldown - 1);
+      player.invuln = Math.max(0, player.invuln - 1);
+      if (player.darkTimer > 0) {
+        player.darkTimer -= 1;
+        if (player.darkTimer <= 0) leaveDarkMode();
+      }
+
+      for (const civilian of state.civilians) {
+        if (!civilian.saved && dist(player, civilian) < player.r + civilian.r + 8) {
+          rescueCivilian(civilian);
+        }
+      }
+      state.civilians = state.civilians.filter((civilian) => !civilian.saved);
+    }
+
+    function updateEnemies() {
+      const player = state.player;
+      const targetCivilians = state.civilians.filter((civilian) => !civilian.saved);
+
+      for (const enemy of state.enemies) {
+        if (enemy.stun > 0) {
+          enemy.stun -= 1;
+          continue;
+        }
+
+        let target = player;
+        if (targetCivilians.length && Math.random() < 0.42) {
+          target = targetCivilians.reduce((closest, civilian) => dist(enemy, civilian) < dist(enemy, closest) ? civilian : closest, targetCivilians[0]);
+        }
+
+        const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
+        const keepAway = enemy.type === "ranger" && dist(enemy, player) < 210;
+        const direction = keepAway ? angle + Math.PI : angle;
+        enemy.x += Math.cos(direction) * enemy.speed;
+        enemy.y += Math.sin(direction) * enemy.speed;
+        enemy.x = clamp(enemy.x, 24, W - 24);
+        enemy.y = clamp(enemy.y, 96, H - 32);
+
+        enemy.attackTimer -= 1;
+        if (enemy.type === "ranger" && enemy.attackTimer <= 0) {
+          enemy.attackTimer = rand(70, 112);
+          const shotAngle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+          state.blasts.push({
+            x: enemy.x,
+            y: enemy.y,
+            vx: Math.cos(shotAngle) * 5.2,
+            vy: Math.sin(shotAngle) * 5.2,
+            r: 8,
+            life: 110,
+            evil: true,
+          });
+        }
+
+        if (dist(enemy, player) < enemy.r + player.r) {
+          damagePlayer(enemy.type === "brute" ? 18 : 12);
+          enemy.x -= Math.cos(angle) * 28;
+          enemy.y -= Math.sin(angle) * 28;
+        }
+
+        for (const civilian of targetCivilians) {
+          if (dist(enemy, civilian) < enemy.r + civilian.r) {
+            civilian.saved = true;
+            state.player.corruption = clamp(state.player.corruption + 6, 0, 100);
+            addBurst(civilian.x, civilian.y, "#a62042", 14, 3.6);
+          }
+        }
+      }
+
+      const defeated = state.enemies.filter((enemy) => enemy.hp <= 0);
+      defeated.forEach(defeatEnemy);
+      state.enemies = state.enemies.filter((enemy) => enemy.hp > 0);
+      state.civilians = state.civilians.filter((civilian) => !civilian.saved);
+    }
+
+    function updateBlasts() {
+      const player = state.player;
+      for (const blast of state.blasts) {
+        blast.x += blast.vx;
+        blast.y += blast.vy;
+        blast.life -= 1;
+        if (blast.evil) {
+          if (dist(blast, player) < blast.r + player.r) {
+            damagePlayer(10);
+            blast.life = 0;
+          }
+        } else {
+          for (const enemy of state.enemies) {
+            if (dist(blast, enemy) < blast.r + enemy.r) {
+              enemy.hp -= 34;
+              enemy.stun = 10;
+              blast.life = 0;
+              addBurst(enemy.x, enemy.y, "#ff2b76", 12, 4);
+            }
+          }
+        }
+      }
+      state.blasts = state.blasts.filter((blast) => blast.life > 0 && blast.x > -30 && blast.x < W + 30 && blast.y > -30 && blast.y < H + 30);
+    }
+
+    function updateWave() {
+      const maxEnemies = Math.min(8, 3 + Math.floor(state.wave * 0.75));
+      const targetDefeats = 5 + state.wave * 3;
+      const spawnedCount = state.waveSpawned || 0;
+
+      state.spawnTimer -= 1;
+      if (state.spawnTimer <= 0 && state.enemies.length < maxEnemies && spawnedCount < targetDefeats) {
+        spawnEnemy();
+        state.waveSpawned = spawnedCount + 1;
+        state.spawnTimer = Math.max(18, 62 - state.wave * 4);
+      }
+
+      if ((state.waveSpawned || 0) >= targetDefeats && state.enemies.length === 0) {
+        state.waveClearedTimer += 1;
+        if (state.waveClearedTimer === 1) {
+          state.score += state.wave * 500;
+          state.player.hp = Math.min(state.player.maxHp, state.player.hp + 18);
+          addBurst(W / 2, H / 2, "#ffd957", 46, 7);
+        }
+        if (state.waveClearedTimer > 120) {
+          state.wave += 1;
+          state.waveSpawned = 0;
+          startWave();
+        }
+      }
+    }
+
+    function updateParticles() {
+      for (const p of state.particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= 0.96;
+        p.vy *= 0.96;
+        p.life -= 1;
+      }
+      state.particles = state.particles.filter((p) => p.life > 0);
+      state.shake = Math.max(0, state.shake - 1);
+    }
+
+    function update() {
+      frame += 1;
+      if (state.mode === "intro") {
+        if (keys.Enter || mouse.down) {
+          state.mode = "playing";
+          state.waveSpawned = 0;
+          startWave();
+        }
+        updateParticles();
+        return;
+      }
+      if (state.mode === "gameover") {
+        updateParticles();
+        if (keys.KeyR || keys.Enter) resetGame();
+        return;
+      }
+
+      updatePlayer();
+      updateEnemies();
+      updateBlasts();
+      updateWave();
+      updateParticles();
+      if (state.player.corruption >= 100 && state.player.darkTimer <= 0) enterDarkMode();
+    }
+
+    function drawCity() {
+      const grd = ctx.createLinearGradient(0, 0, 0, H);
+      grd.addColorStop(0, "#111832");
+      grd.addColorStop(0.58, "#15101f");
+      grd.addColorStop(1, "#081018");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      for (let i = 0; i < 34; i++) {
+        const x = (i * 53 + (frame * 0.18)) % (W + 80) - 80;
+        const h = 64 + ((i * 37) % 130);
+        ctx.fillStyle = i % 4 === 0 ? "#211834" : "#141a2b";
+        ctx.fillRect(x, 86 - h * 0.18, 36 + (i % 3) * 18, h);
+        ctx.fillStyle = i % 5 === 0 ? "#ff345f" : "#ffd957";
+        for (let y = 110 - h * 0.18; y < 92 + h; y += 24) {
+          ctx.fillRect(x + 8, y, 7, 7);
+          ctx.fillRect(x + 24, y + 6, 7, 7);
+        }
+      }
+      ctx.restore();
+
+      ctx.fillStyle = "#14192a";
+      ctx.fillRect(0, 92, W, 8);
+      ctx.fillStyle = "#0b0e18";
+      ctx.fillRect(0, H - 34, W, 34);
+
+      ctx.strokeStyle = "rgba(255, 217, 87, 0.12)";
+      ctx.lineWidth = 1;
+      for (let x = -80; x < W + 120; x += 80) {
+        ctx.beginPath();
+        ctx.moveTo(x + ((frame * 0.8) % 80), H - 34);
+        ctx.lineTo(x + 260 + ((frame * 0.8) % 80), 100);
+        ctx.stroke();
+      }
+      for (let y = 132; y < H - 40; y += 70) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+    }
+
+    function drawBear(x, y, isDark) {
+      const player = state.player;
+      const moving = keys.KeyA || keys.ArrowLeft || keys.KeyD || keys.ArrowRight || keys.KeyW || keys.ArrowUp || keys.KeyS || keys.ArrowDown;
+      const attacking = player.attackCooldown > 6 || mouse.down || keys.KeyJ || keys.KeyK;
+      const spriteIndex = attacking ? 3 : moving ? Math.floor(frame / 10) % 2 + 1 : 0;
+      const alpha = player.invuln > 0 && frame % 6 < 3 ? 0.55 : 1;
+      if (drawSuperBearSprite(x, y, spriteIndex, Math.cos(player.facing) < 0, isDark, alpha)) {
+        return;
+      }
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(state.player.facing * 0.12);
+      const capeColor = isDark ? "#161018" : "#d91f44";
+      const bodyColor = isDark ? "#241625" : "#b96a28";
+      const muzzle = isDark ? "#ff4e85" : "#ffe1a6";
+      ctx.fillStyle = capeColor;
+      ctx.beginPath();
+      ctx.moveTo(-16, 22);
+      ctx.lineTo(-44, 54 + Math.sin(frame * 0.2) * 5);
+      ctx.lineTo(0, 39);
+      ctx.lineTo(44, 54 + Math.cos(frame * 0.17) * 5);
+      ctx.lineTo(16, 22);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = bodyColor;
+      ctx.beginPath();
+      ctx.arc(0, 3, 23, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-14, -18, 10, 0, Math.PI * 2);
+      ctx.arc(14, -18, 10, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = muzzle;
+      ctx.beginPath();
+      ctx.arc(0, 8, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = isDark ? "#fff" : "#121018";
+      ctx.fillRect(-8, -3, 5, 5);
+      ctx.fillRect(4, -3, 5, 5);
+      ctx.fillStyle = isDark ? "#ff1d66" : "#121018";
+      ctx.beginPath();
+      ctx.arc(0, 8, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = isDark ? "#ff1d66" : "#ffd957";
+      ctx.font = "bold 18px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.fillText(isDark ? "D" : "S", 0, 1);
+      ctx.restore();
+    }
+
+    function drawEnemy(enemy) {
+      const pulse = Math.sin(frame * 0.12 + enemy.x) * 0.08 + 1;
+      ctx.save();
+      ctx.translate(enemy.x, enemy.y);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = enemy.type === "brute" ? "#472047" : enemy.type === "ranger" ? "#222a64" : "#352246";
+      ctx.beginPath();
+      ctx.arc(0, 0, enemy.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#f41f63";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.fillStyle = "#f41f63";
+      ctx.fillRect(-11, -5, 8, 5);
+      ctx.fillRect(4, -5, 8, 5);
+      ctx.fillStyle = "#161018";
+      ctx.beginPath();
+      ctx.arc(0, 7, 7, 0, Math.PI);
+      ctx.stroke();
+      ctx.fillStyle = "#ffe06a";
+      ctx.font = "bold 11px Trebuchet MS";
+      ctx.textAlign = "center";
+      ctx.fillText(enemy.type === "brute" ? "B" : enemy.type === "ranger" ? "R" : "H", 0, -enemy.r - 10);
+      ctx.restore();
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+      ctx.fillRect(enemy.x - 22, enemy.y + enemy.r + 8, 44, 5);
+      ctx.fillStyle = "#ff375e";
+      ctx.fillRect(enemy.x - 22, enemy.y + enemy.r + 8, 44 * clamp(enemy.hp / enemy.maxHp, 0, 1), 5);
+    }
+
+    function drawCivilian(civilian) {
+      const bob = Math.sin(frame * 0.12 + civilian.panic) * 3;
+      ctx.save();
+      ctx.translate(civilian.x, civilian.y + bob);
+      ctx.fillStyle = "#5dff9c";
+      ctx.beginPath();
+      ctx.arc(0, -4, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#1c6636";
+      ctx.fillRect(-9, 6, 18, 20);
+      ctx.strokeStyle = "rgba(93, 255, 156, 0.32)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 8, 25 + Math.sin(frame * 0.08) * 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawBars() {
+      const player = state.player;
+      ctx.save();
+      ctx.fillStyle = "rgba(3, 5, 13, 0.75)";
+      ctx.fillRect(24, 20, W - 48, 58);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
+      ctx.strokeRect(24, 20, W - 48, 58);
+
+      ctx.font = "bold 18px Trebuchet MS";
+      ctx.fillStyle = "#fff8e8";
+      ctx.textAlign = "left";
+      ctx.fillText("SUPER BEAR: LAST HERO", 42, 45);
+
+      ctx.font = "bold 14px Trebuchet MS";
+      ctx.fillStyle = "#9fd8ff";
+      ctx.fillText(`Wave ${state.wave}`, 42, 67);
+      ctx.fillText(`Score ${state.score}`, 126, 67);
+      ctx.fillText(`Rescued ${state.rescued}`, 238, 67);
+
+      drawMeter(760, 31, 176, 13, player.hp / player.maxHp, "#5dff9c", "HP");
+      drawMeter(960, 31, 250, 13, player.corruption / 100, player.darkTimer > 0 ? "#ff1d66" : "#ffd957", player.darkTimer > 0 ? "DARK SUPER BEAR" : "CORRUPTION");
+      ctx.restore();
+    }
+
+    function drawMeter(x, y, w, h, pct, color, label) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w * clamp(pct, 0, 1), h);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+      ctx.strokeRect(x, y, w, h);
+      ctx.font = "bold 12px Trebuchet MS";
+      ctx.fillStyle = "#fff8e8";
+      ctx.textAlign = "left";
+      ctx.fillText(label, x, y + 30);
+    }
+
+    function drawOverlay() {
+      if (state.mode === "intro") {
+        ctx.fillStyle = "rgba(3, 4, 11, 0.72)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.textAlign = "center";
+        drawSuperBearSprite(W / 2, 205, Math.floor(frame / 14) % 4, false, false, 1, 142);
+        ctx.fillStyle = "#ffd957";
+        ctx.font = "900 62px Trebuchet MS";
+        ctx.fillText("SUPER BEAR", W / 2, 326);
+        ctx.fillStyle = "#ff2b76";
+        ctx.font = "900 50px Trebuchet MS";
+        ctx.fillText("LAST HERO", W / 2, 380);
+        ctx.fillStyle = "#fff8e8";
+        ctx.font = "22px Trebuchet MS";
+        ctx.fillText("Everyone became evil except Super Bear.", W / 2, 430);
+        ctx.fillText("Survive waves, rescue civilians, and resist the corruption rising inside you.", W / 2, 465);
+        ctx.fillStyle = "#9fd8ff";
+        ctx.font = "bold 20px Trebuchet MS";
+        ctx.fillText("Press Enter or click to begin", W / 2, 535);
+      }
+
+      if (state.mode === "playing" && state.player.darkTimer > 0) {
+        ctx.save();
+        ctx.globalAlpha = 0.22 + Math.sin(frame * 0.18) * 0.08;
+        ctx.fillStyle = "#ff1d66";
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#fff8e8";
+        ctx.font = "900 34px Trebuchet MS";
+        ctx.fillText("DARK SUPER BEAR", W / 2, 118);
+      }
+
+      if (state.waveClearedTimer > 0 && state.mode === "playing") {
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#ffd957";
+        ctx.font = "900 34px Trebuchet MS";
+        ctx.fillText(`Wave ${state.wave} cleared`, W / 2, 158);
+      }
+
+      if (state.mode === "gameover") {
+        ctx.fillStyle = "rgba(3, 4, 11, 0.78)";
+        ctx.fillRect(0, 0, W, H);
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#ff2b76";
+        ctx.font = "900 58px Trebuchet MS";
+        ctx.fillText("THE WORLD WENT DARK", W / 2, 280);
+        ctx.fillStyle = "#fff8e8";
+        ctx.font = "22px Trebuchet MS";
+        ctx.fillText(`Final score ${state.score}  |  Civilians rescued ${state.rescued}  |  Wave ${state.wave}`, W / 2, 333);
+        ctx.fillStyle = "#9fd8ff";
+        ctx.font = "bold 20px Trebuchet MS";
+        ctx.fillText("Press R or Enter to restart", W / 2, 392);
+      }
+    }
+
+    function draw() {
+      ctx.save();
+      const shake = state.shake;
+      if (shake > 0) {
+        ctx.translate(rand(-shake, shake) * 0.45, rand(-shake, shake) * 0.45);
+      }
+      drawCity();
+      state.civilians.forEach(drawCivilian);
+      state.blasts.forEach((blast) => {
+        ctx.fillStyle = blast.evil ? "#c82856" : "#ff2b76";
+        ctx.beginPath();
+        ctx.arc(blast.x, blast.y, blast.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = blast.evil ? "#521123" : "#fff8e8";
+        ctx.stroke();
+      });
+      state.enemies.forEach(drawEnemy);
+      drawBear(state.player.x, state.player.y, state.player.darkTimer > 0);
+      state.particles.forEach((p) => {
+        ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+        ctx.globalAlpha = 1;
+      });
+      ctx.restore();
+      drawBars();
+      drawOverlay();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (event) => {
+      keys[event.code] = true;
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(event.code)) {
+        event.preventDefault();
+      }
+    });
+    window.addEventListener("keyup", (event) => {
+      keys[event.code] = false;
+    });
+    canvas.addEventListener("mousemove", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * W;
+      mouse.y = ((event.clientY - rect.top) / rect.height) * H;
+    });
+    canvas.addEventListener("mousedown", () => {
+      mouse.down = true;
+    });
+    window.addEventListener("mouseup", () => {
+      mouse.down = false;
+    });
+    window.addEventListener("contextmenu", (event) => event.preventDefault());
+
+    resetGame();
+    loop();
+  </script>
+</body>
+</html>
