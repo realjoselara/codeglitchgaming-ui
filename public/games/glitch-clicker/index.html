@@ -1,0 +1,1169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Glitch Clicker</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #05070d;
+      --panel: rgba(7, 13, 24, 0.88);
+      --panel-2: rgba(15, 24, 38, 0.92);
+      --cyan: #00e5ff;
+      --green: #39ff14;
+      --pink: #ff314f;
+      --gold: #ffd44d;
+      --text: #e8fbff;
+      --muted: #9fb7c6;
+      --border: rgba(255, 255, 255, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      overflow: hidden;
+      color: var(--text);
+      font-family: "Trebuchet MS", system-ui, sans-serif;
+      background:
+        linear-gradient(90deg, rgba(0, 229, 255, 0.1), transparent 42%),
+        linear-gradient(270deg, rgba(57, 255, 20, 0.12), transparent 40%),
+        linear-gradient(145deg, rgba(255, 49, 79, 0.11), transparent 48%),
+        #02040a;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .game {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      min-height: 620px;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .game::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.92), rgba(0, 0, 0, 0.28));
+    }
+
+    .game::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: 0.54;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(0, 229, 255, 0.22), transparent 28%),
+        radial-gradient(circle at 76% 18%, rgba(255, 49, 79, 0.2), transparent 24%),
+        radial-gradient(circle at 58% 80%, rgba(57, 255, 20, 0.17), transparent 34%);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr 1fr 0.8fr;
+      gap: 10px;
+      padding: 14px;
+      background: linear-gradient(180deg, rgba(3, 8, 16, 0.96), rgba(3, 8, 16, 0.72));
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+      z-index: 5;
+    }
+
+    .stat {
+      min-height: 78px;
+      display: grid;
+      align-content: center;
+      gap: 5px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.055);
+      box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.06);
+    }
+
+    .label {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .value {
+      margin: 0;
+      font-size: clamp(1.35rem, 3.2vw, 2.25rem);
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .subvalue {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .stage {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(270px, 350px);
+      min-height: 0;
+    }
+
+    .internet {
+      position: relative;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      min-height: 0;
+      padding: 32px;
+    }
+
+    .bear-clicker {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      width: clamp(210px, 34vw, 360px);
+      aspect-ratio: 1;
+      border: 0;
+      border-radius: 50%;
+      color: #221001;
+      background:
+        radial-gradient(circle at 35% 30%, #fff0b0 0 9%, transparent 10%),
+        radial-gradient(circle at 65% 30%, #fff0b0 0 9%, transparent 10%),
+        radial-gradient(circle at 50% 60%, #f6c35d 0 22%, transparent 23%),
+        radial-gradient(circle at 50% 50%, #b86b2b 0 58%, transparent 59%),
+        radial-gradient(circle at 18% 20%, #8c4d22 0 18%, transparent 19%),
+        radial-gradient(circle at 82% 20%, #8c4d22 0 18%, transparent 19%);
+      box-shadow:
+        0 0 0 8px rgba(255, 212, 77, 0.2),
+        0 24px 70px rgba(0, 0, 0, 0.4),
+        0 0 70px rgba(255, 212, 77, 0.34);
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+    }
+
+    .bear-clicker::before,
+    .bear-clicker::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+      background: #120806;
+    }
+
+    .bear-clicker::before {
+      width: 12%;
+      height: 12%;
+      left: 34%;
+      top: 38%;
+      box-shadow: 150% 0 0 #120806;
+    }
+
+    .bear-clicker::after {
+      width: 15%;
+      height: 10%;
+      left: 42.5%;
+      top: 55%;
+      box-shadow: 0 32px 0 -10px #120806;
+    }
+
+    .bear-clicker:hover {
+      filter: brightness(1.08);
+      transform: translateY(-2px) scale(1.02);
+      box-shadow:
+        0 0 0 10px rgba(57, 255, 20, 0.18),
+        0 28px 80px rgba(0, 0, 0, 0.44),
+        0 0 90px rgba(0, 229, 255, 0.34);
+    }
+
+    .bear-clicker:active {
+      transform: translateY(2px) scale(0.97);
+    }
+
+    .bear-clicker:disabled {
+      cursor: not-allowed;
+      filter: grayscale(0.65) brightness(0.75);
+    }
+
+    .bear-label {
+      position: absolute;
+      bottom: 13%;
+      padding: 7px 12px;
+      border-radius: 999px;
+      color: #04120a;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      font-size: clamp(0.82rem, 2vw, 1rem);
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .node {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 18px rgba(0, 229, 255, 0.8);
+      opacity: 0.5;
+    }
+
+    .line {
+      position: absolute;
+      height: 2px;
+      transform-origin: 0 50%;
+      background: linear-gradient(90deg, rgba(0, 229, 255, 0.38), rgba(57, 255, 20, 0.2));
+      opacity: 0.42;
+    }
+
+    .glitch {
+      position: absolute;
+      width: 78px;
+      height: 78px;
+      border: 0;
+      padding: 0;
+      border-radius: 8px;
+      color: var(--text);
+      background:
+        linear-gradient(135deg, rgba(0, 229, 255, 0.26), rgba(255, 49, 79, 0.26)),
+        rgba(3, 7, 16, 0.95);
+      box-shadow:
+        0 0 0 2px rgba(255, 255, 255, 0.18),
+        0 12px 34px rgba(0, 0, 0, 0.36),
+        0 0 30px rgba(0, 229, 255, 0.32);
+      cursor: pointer;
+      transform: translate(-50%, -50%) rotate(var(--tilt));
+      transition: filter 120ms ease, box-shadow 120ms ease;
+      touch-action: manipulation;
+    }
+
+    .glitch::before,
+    .glitch::after {
+      content: "";
+      position: absolute;
+      inset: 12px;
+      border: 4px solid currentColor;
+      border-left-color: var(--pink);
+      border-right-color: var(--green);
+      clip-path: polygon(0 0, 100% 0, 100% 36%, 72% 36%, 72% 58%, 100% 58%, 100% 100%, 0 100%, 0 72%, 32% 72%, 32% 50%, 0 50%);
+    }
+
+    .glitch::after {
+      inset: 22px;
+      border-width: 3px;
+      opacity: 0.8;
+      transform: translate(var(--tear-x), var(--tear-y));
+    }
+
+    .glitch:hover {
+      filter: brightness(1.25);
+      box-shadow:
+        0 0 0 3px rgba(255, 255, 255, 0.24),
+        0 18px 44px rgba(0, 0, 0, 0.42),
+        0 0 42px rgba(57, 255, 20, 0.45);
+    }
+
+    .glitch.danger {
+      color: #fff3f6;
+      background:
+        linear-gradient(135deg, rgba(255, 49, 79, 0.42), rgba(255, 212, 77, 0.2)),
+        rgba(28, 5, 13, 0.95);
+      box-shadow:
+        0 0 0 2px rgba(255, 49, 79, 0.5),
+        0 0 40px rgba(255, 49, 79, 0.48);
+    }
+
+    .glitch.fast {
+      color: #eaffff;
+      background:
+        linear-gradient(135deg, rgba(0, 229, 255, 0.42), rgba(57, 255, 20, 0.24)),
+        rgba(4, 20, 24, 0.95);
+    }
+
+    .float {
+      position: absolute;
+      pointer-events: none;
+      font-weight: 900;
+      color: var(--gold);
+      text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45), 0 0 18px rgba(255, 212, 77, 0.5);
+      animation: float-up 820ms ease-out forwards;
+    }
+
+    @keyframes float-up {
+      from {
+        opacity: 1;
+        transform: translate(-50%, -20%) scale(1);
+      }
+
+      to {
+        opacity: 0;
+        transform: translate(-50%, -120%) scale(1.18);
+      }
+    }
+
+    .sidebar {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+      min-height: 0;
+      padding: 14px;
+      border-left: 1px solid var(--border);
+      background: rgba(2, 6, 13, 0.76);
+      backdrop-filter: blur(10px);
+      z-index: 4;
+    }
+
+    .titlebox,
+    .upgrade,
+    .mission,
+    .modal {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+    }
+
+    .titlebox {
+      padding: 14px;
+    }
+
+    h1 {
+      margin: 4px 0 0;
+      font-size: clamp(1.75rem, 4vw, 2.65rem);
+      line-height: 0.98;
+      color: transparent;
+      background: linear-gradient(90deg, var(--cyan), var(--green), var(--pink));
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    .upgrades {
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .upgrade {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px 10px;
+      padding: 12px;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .upgrade:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .upgrade strong {
+      font-size: 1rem;
+    }
+
+    .upgrade small {
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .upgrade .cost {
+      align-self: center;
+      padding: 7px 9px;
+      border-radius: 6px;
+      color: #180d00;
+      font-weight: 900;
+      background: var(--gold);
+      white-space: nowrap;
+    }
+
+    .upgrade:hover:not(:disabled) {
+      border-color: rgba(0, 229, 255, 0.48);
+      background: var(--panel-2);
+    }
+
+    .upgrade.fix-internet {
+      border-color: rgba(57, 255, 20, 0.42);
+      background:
+        linear-gradient(135deg, rgba(57, 255, 20, 0.16), rgba(0, 229, 255, 0.08)),
+        var(--panel);
+    }
+
+    .upgrade.fix-internet .cost {
+      color: #04120a;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+    }
+
+    .mission {
+      padding: 12px;
+    }
+
+    .progress {
+      height: 18px;
+      overflow: hidden;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    .bar {
+      width: var(--repair);
+      height: 100%;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+      box-shadow: 0 0 22px rgba(57, 255, 20, 0.45);
+      transition: width 240ms ease;
+    }
+
+    .action-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .control {
+      min-height: 42px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.07);
+      cursor: pointer;
+    }
+
+    .control.primary {
+      color: #04120a;
+      border: 0;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+    }
+
+    .control:hover {
+      filter: brightness(1.12);
+    }
+
+    .status {
+      position: absolute;
+      left: 18px;
+      bottom: 18px;
+      max-width: min(520px, calc(100% - 36px));
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(3, 8, 16, 0.8);
+      color: var(--muted);
+      line-height: 1.35;
+      pointer-events: none;
+    }
+
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.58);
+      z-index: 20;
+    }
+
+    .modal-backdrop.show {
+      display: flex;
+    }
+
+    .modal {
+      width: min(520px, 100%);
+      padding: 22px;
+      text-align: center;
+      background: rgba(5, 10, 20, 0.96);
+    }
+
+    .modal h2 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 7vw, 4rem);
+      line-height: 0.95;
+      color: var(--green);
+    }
+
+    .modal p {
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .glitch {
+        animation: glitch-jitter 720ms steps(2, end) infinite;
+      }
+
+      .fast {
+        animation-duration: 420ms;
+      }
+    }
+
+    @keyframes glitch-jitter {
+      0%,
+      100% {
+        translate: 0 0;
+      }
+
+      33% {
+        translate: 2px -1px;
+      }
+
+      66% {
+        translate: -2px 1px;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .game {
+        min-height: 760px;
+      }
+
+      .topbar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .stage {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(420px, 1fr) auto;
+      }
+
+      .sidebar {
+        border-left: 0;
+        border-top: 1px solid var(--border);
+        max-height: 340px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .game {
+        min-height: 820px;
+      }
+
+      .topbar {
+        padding: 8px;
+        gap: 8px;
+      }
+
+      .stat {
+        min-height: 64px;
+        padding: 9px;
+      }
+
+      .value {
+        font-size: 1.2rem;
+      }
+
+      .glitch {
+        width: 64px;
+        height: 64px;
+      }
+
+      .sidebar {
+        padding: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="game" style="--repair: 0%">
+    <section class="topbar" aria-label="Game stats">
+      <div class="stat">
+        <p class="label">Code Coins</p>
+        <p class="value" id="coins">0</p>
+        <p class="subvalue" id="coinsRate">+0 / sec</p>
+      </div>
+      <div class="stat">
+        <p class="label">Click Power</p>
+        <p class="value" id="power">1</p>
+        <p class="subvalue" id="combo">Combo x1</p>
+      </div>
+      <div class="stat">
+        <p class="label">Internet Fixed</p>
+        <p class="value" id="repairText">0%</p>
+        <p class="subvalue" id="threat">Signal unstable</p>
+      </div>
+      <div class="stat">
+        <p class="label">Bear Clicks</p>
+        <p class="value" id="cleared">0</p>
+        <p class="subvalue">Goal: 10,000%</p>
+      </div>
+    </section>
+
+    <section class="stage">
+      <div class="internet" id="internet" aria-label="Left click the big bear icon or press Space to earn Code Coins">
+        <button class="bear-clicker" id="bearBtn" type="button" aria-label="Big bear icon. Left click or press Space to earn Code Coins">
+          <span class="bear-label">Left Click / Space</span>
+        </button>
+      </div>
+
+      <aside class="sidebar" aria-label="Upgrade shop">
+        <div class="titlebox">
+          <p class="label">CodeGlitchGaming</p>
+          <h1>Glitch Clicker</h1>
+          <p class="subvalue">Left click the big bear icon or press Space, earn Code Coins, buy upgrades, and buy fixes for the internet.</p>
+        </div>
+
+        <div class="upgrades" id="upgrades"></div>
+
+        <div class="mission">
+          <p class="label">Repair Mission</p>
+          <div class="progress" aria-hidden="true"><div class="bar"></div></div>
+          <p class="subvalue" id="missionText">Buy Fix Internet with Code Coins to stabilize the first nodes.</p>
+          <div class="action-row">
+            <button class="control primary" id="boostBtn" type="button">Boost</button>
+            <button class="control" id="stopBtn" type="button">Stop</button>
+            <button class="control" id="resetBtn" type="button">Reset</button>
+          </div>
+        </div>
+      </aside>
+
+      <p class="status" id="status">Left click the big bear icon or press Space to earn Code Coins, then buy Fix Internet in the shop.</p>
+    </section>
+
+    <div class="modal-backdrop" id="winModal">
+      <div class="modal">
+        <p class="label">Internet Maxed</p>
+        <h2>Victory</h2>
+        <p>You pushed the internet fix meter all the way to 10,000%.</p>
+        <button class="control primary" id="playAgainBtn" type="button">Play Again</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const internet = document.getElementById("internet");
+    const bearBtn = document.getElementById("bearBtn");
+    const game = document.querySelector(".game");
+    const coinsEl = document.getElementById("coins");
+    const coinsRateEl = document.getElementById("coinsRate");
+    const powerEl = document.getElementById("power");
+    const comboEl = document.getElementById("combo");
+    const repairTextEl = document.getElementById("repairText");
+    const threatEl = document.getElementById("threat");
+    const clearedEl = document.getElementById("cleared");
+    const upgradesEl = document.getElementById("upgrades");
+    const statusEl = document.getElementById("status");
+    const missionTextEl = document.getElementById("missionText");
+    const boostBtn = document.getElementById("boostBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const playAgainBtn = document.getElementById("playAgainBtn");
+    const winModal = document.getElementById("winModal");
+
+    const SAVE_KEY = "glitch-clicker-save-v1";
+    const GLITCH_TYPES = [
+      { className: "", reward: 1, life: 3600, label: "glitch" },
+      { className: "danger", reward: 4, life: 2600, label: "red glitch" },
+      { className: "fast", reward: 2, life: 1700, label: "fast glitch" }
+    ];
+
+    const FIX_INTERNET = {
+      name: "Fix Internet",
+      desc: "Spend Code Coins to repair the internet right now.",
+      repairAmount: 1
+    };
+
+    const MEGA_FIX = {
+      name: "Make Internet Fix 100+",
+      desc: "Spend 50,000 Code Coins for a massive internet repair.",
+      cost: 50000,
+      repairAmount: 100
+    };
+
+    const MAX_REPAIR = 10000;
+
+    const UPGRADES = [
+      {
+        id: "cursor",
+        name: "Debug Cursor",
+        desc: "+1 Code Coin per bear click.",
+        baseCost: 12,
+        scale: 1.52,
+        apply: () => state.clickPower += 1
+      },
+      {
+        id: "scanner",
+        name: "Packet Scanner",
+        desc: "Earn passive Code Coins every second.",
+        baseCost: 35,
+        scale: 1.68,
+        apply: () => state.passive += 1
+      },
+      {
+        id: "firewall",
+        name: "Firewall Patch",
+        desc: "Fix Internet repairs more with each buy.",
+        baseCost: 80,
+        scale: 1.78,
+        apply: () => state.repairPower += 0.34
+      },
+      {
+        id: "bot",
+        name: "Cleanup Bot",
+        desc: "Auto-clicks the big bear icon every few seconds.",
+        baseCost: 160,
+        scale: 1.9,
+        apply: () => state.botSpeed += 1
+      }
+    ];
+
+    let state;
+    let glitches = [];
+    let floats = [];
+    let lastTick = performance.now();
+    let spawnTimer = 0;
+    let botTimer = 0;
+    let nodeTimer = 0;
+    let shopSignature = "";
+
+    function freshState() {
+      return {
+        coins: 0,
+        clickPower: 1,
+        passive: 0,
+        repair: 0,
+        repairPower: 1,
+        cleared: 0,
+        combo: 1,
+        bestCombo: 1,
+        boostUntil: 0,
+        botSpeed: 0,
+        paused: false,
+        won: false,
+        upgradeLevels: {
+          cursor: 0,
+          scanner: 0,
+          firewall: 0,
+          bot: 0
+        }
+      };
+    }
+
+    function loadGame() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(SAVE_KEY));
+        state = { ...freshState(), ...saved };
+        state.upgradeLevels = { ...freshState().upgradeLevels, ...(saved?.upgradeLevels || {}) };
+        state.repair = Math.min(MAX_REPAIR, state.repair);
+        if (state.repair < MAX_REPAIR) state.won = false;
+      } catch {
+        state = freshState();
+      }
+    }
+
+    function saveGame() {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    }
+
+    function format(value) {
+      if (value >= 1000000) return `${(value / 1000000).toFixed(1)}m`;
+      if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+      return Math.floor(value).toString();
+    }
+
+    function random(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function upgradeCost(upgrade) {
+      return Math.floor(upgrade.baseCost * Math.pow(upgrade.scale, state.upgradeLevels[upgrade.id]));
+    }
+
+    function fixInternetCost() {
+      return Math.floor(20 + state.repair * 0.8);
+    }
+
+    function getSpawnDelay() {
+      return Math.max(460, 1250 - state.cleared * 7 - state.repair * 3);
+    }
+
+    function getBounds() {
+      const rect = internet.getBoundingClientRect();
+      return {
+        width: rect.width,
+        height: rect.height,
+        pad: rect.width < 560 ? 44 : 58
+      };
+    }
+
+    function spawnNode() {
+      const bounds = getBounds();
+      const node = document.createElement("span");
+      node.className = "node";
+      node.style.left = `${random(20, Math.max(30, bounds.width - 20))}px`;
+      node.style.top = `${random(24, Math.max(40, bounds.height - 24))}px`;
+      internet.appendChild(node);
+
+      const nodes = [...internet.querySelectorAll(".node")];
+      if (nodes.length > 1) {
+        const previous = nodes[Math.max(0, nodes.length - 2)];
+        const x1 = parseFloat(previous.style.left);
+        const y1 = parseFloat(previous.style.top);
+        const x2 = parseFloat(node.style.left);
+        const y2 = parseFloat(node.style.top);
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const line = document.createElement("span");
+        line.className = "line";
+        line.style.left = `${x1 + 5}px`;
+        line.style.top = `${y1 + 5}px`;
+        line.style.width = `${Math.hypot(dx, dy)}px`;
+        line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+        internet.insertBefore(line, internet.firstChild);
+      }
+
+      const allNodes = internet.querySelectorAll(".node");
+      const allLines = internet.querySelectorAll(".line");
+      if (allNodes.length > 22) allNodes[0].remove();
+      if (allLines.length > 22) allLines[0].remove();
+    }
+
+    function spawnGlitch() {
+      if (state.won || glitches.length > 12) return;
+
+      const bounds = getBounds();
+      const typeRoll = Math.random();
+      const type = typeRoll > 0.86 ? GLITCH_TYPES[1] : typeRoll > 0.66 ? GLITCH_TYPES[2] : GLITCH_TYPES[0];
+      const el = document.createElement("button");
+      el.className = `glitch ${type.className}`.trim();
+      el.type = "button";
+      el.setAttribute("aria-label", `Clear ${type.label}`);
+      el.style.left = `${random(bounds.pad, Math.max(bounds.pad, bounds.width - bounds.pad))}px`;
+      el.style.top = `${random(bounds.pad, Math.max(bounds.pad, bounds.height - bounds.pad))}px`;
+      el.style.setProperty("--tilt", `${random(-10, 10)}deg`);
+      el.style.setProperty("--tear-x", `${random(-5, 5)}px`);
+      el.style.setProperty("--tear-y", `${random(-5, 5)}px`);
+
+      const glitch = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        el,
+        type,
+        born: performance.now()
+      };
+
+      el.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        clearGlitch(glitch, event.clientX, event.clientY, false);
+      });
+
+      internet.appendChild(el);
+      glitches.push(glitch);
+    }
+
+    function makeFloat(text, x, y) {
+      const rect = internet.getBoundingClientRect();
+      const el = document.createElement("span");
+      el.className = "float";
+      el.textContent = text;
+      el.style.left = `${x - rect.left}px`;
+      el.style.top = `${y - rect.top}px`;
+      internet.appendChild(el);
+      setTimeout(() => el.remove(), 850);
+    }
+
+    function clearGlitch(glitch, x, y, automatic) {
+      const index = glitches.indexOf(glitch);
+      if (index === -1 || state.won) return;
+
+      glitches.splice(index, 1);
+      glitch.el.remove();
+
+      const boost = performance.now() < state.boostUntil ? 2 : 1;
+      const comboBonus = Math.min(5, Math.floor(state.combo / 5));
+      const reward = (state.clickPower + comboBonus) * glitch.type.reward * boost;
+      state.coins += reward;
+      state.repair = Math.min(MAX_REPAIR, state.repair + state.repairPower * (automatic ? 0.52 : 1));
+      state.cleared += 1;
+      state.combo += automatic ? 0 : 1;
+      state.bestCombo = Math.max(state.bestCombo, state.combo);
+
+      makeFloat(`+${format(reward)}`, x, y);
+      statusEl.textContent = automatic
+        ? "Cleanup Bot patched a glitch in the background."
+        : `${glitch.type.label} converted into ${format(reward)} Code Coins.`;
+
+      completeRepairIfReady();
+
+      updateUI();
+      saveGame();
+    }
+
+    function clickBear(x, y, automatic = false) {
+      if (state.won || state.paused) return;
+
+      const boost = performance.now() < state.boostUntil ? 2 : 1;
+      const comboBonus = Math.min(5, Math.floor(state.combo / 8));
+      const reward = (state.clickPower + comboBonus) * boost;
+
+      state.coins += reward;
+      state.cleared += 1;
+      state.combo += automatic ? 0 : 1;
+      state.bestCombo = Math.max(state.bestCombo, state.combo);
+
+      makeFloat(`+${format(reward)}`, x, y);
+      statusEl.textContent = automatic
+        ? `Cleanup Bot clicked the bear for ${format(reward)} Code Coins.`
+        : `Bear click earned ${format(reward)} Code Coins.`;
+
+      updateUI();
+      saveGame();
+    }
+
+    function completeRepairIfReady() {
+      if (state.repair >= MAX_REPAIR && !state.won) {
+        state.won = true;
+        winModal.classList.add("show");
+      }
+    }
+
+    function expireGlitches(now) {
+      glitches = glitches.filter((glitch) => {
+        if (now - glitch.born < glitch.type.life) return true;
+        glitch.el.remove();
+        state.combo = Math.max(1, Math.floor(state.combo * 0.5));
+        statusEl.textContent = "A glitch jumped to another server. Combo reduced.";
+        return false;
+      });
+    }
+
+    function renderUpgrades() {
+      const signature = JSON.stringify({
+        coins: Math.floor(state.coins),
+        repair: Math.floor(state.repair),
+        won: state.won,
+        paused: state.paused,
+        levels: state.upgradeLevels
+      });
+
+      if (signature === shopSignature) return;
+
+      shopSignature = signature;
+      upgradesEl.innerHTML = "";
+      const fixCost = fixInternetCost();
+      const fixButton = document.createElement("button");
+      fixButton.className = "upgrade fix-internet";
+      fixButton.type = "button";
+      fixButton.disabled = state.coins < fixCost || state.won;
+      fixButton.innerHTML = `
+        <span>
+          <strong>${FIX_INTERNET.name}</strong><br />
+          <small>${FIX_INTERNET.desc} +${FIX_INTERNET.repairAmount}% repair.</small>
+        </span>
+        <span class="cost">${format(fixCost)}</span>
+      `;
+      fixButton.addEventListener("click", buyInternetFix);
+      upgradesEl.appendChild(fixButton);
+
+      for (const upgrade of UPGRADES) {
+        const cost = upgradeCost(upgrade);
+        const level = state.upgradeLevels[upgrade.id];
+        const button = document.createElement("button");
+        button.className = "upgrade";
+        button.type = "button";
+        button.disabled = state.coins < cost || state.won;
+        button.innerHTML = `
+          <span>
+            <strong>${upgrade.name} Lv.${level}</strong><br />
+            <small>${upgrade.desc}</small>
+          </span>
+          <span class="cost">${format(cost)}</span>
+        `;
+        button.addEventListener("click", () => buyUpgrade(upgrade));
+        upgradesEl.appendChild(button);
+      }
+
+      const megaButton = document.createElement("button");
+      megaButton.className = "upgrade fix-internet";
+      megaButton.type = "button";
+      megaButton.disabled = state.coins < MEGA_FIX.cost || state.won;
+      megaButton.innerHTML = `
+        <span>
+          <strong>${MEGA_FIX.name}</strong><br />
+          <small>${MEGA_FIX.desc} +${MEGA_FIX.repairAmount}% repair.</small>
+        </span>
+        <span class="cost">${format(MEGA_FIX.cost)}</span>
+      `;
+      megaButton.addEventListener("click", buyMegaInternetFix);
+      upgradesEl.appendChild(megaButton);
+    }
+
+    function buyUpgrade(upgrade) {
+      const cost = upgradeCost(upgrade);
+      if (state.coins < cost || state.won) return;
+      state.coins -= cost;
+      state.upgradeLevels[upgrade.id] += 1;
+      upgrade.apply();
+      statusEl.textContent = `${upgrade.name} installed. The repair crew gets stronger.`;
+      updateUI();
+      saveGame();
+    }
+
+    function buyInternetFix() {
+      const cost = fixInternetCost();
+      if (state.coins < cost || state.won) return;
+
+      state.coins -= cost;
+      state.repair = Math.min(MAX_REPAIR, state.repair + FIX_INTERNET.repairAmount * state.repairPower);
+      statusEl.textContent = `Bought an internet fix for ${format(cost)} Code Coins.`;
+      completeRepairIfReady();
+      updateUI();
+      saveGame();
+    }
+
+    function buyMegaInternetFix() {
+      if (state.coins < MEGA_FIX.cost || state.won) return;
+
+      state.coins -= MEGA_FIX.cost;
+      state.repair = Math.min(MAX_REPAIR, state.repair + MEGA_FIX.repairAmount);
+      statusEl.textContent = `Bought Make Internet Fix 100+ for ${format(MEGA_FIX.cost)} Code Coins.`;
+      completeRepairIfReady();
+      updateUI();
+      saveGame();
+    }
+
+    function updateUI() {
+      const passiveBoost = performance.now() < state.boostUntil ? 2 : 1;
+      coinsEl.textContent = format(state.coins);
+      coinsRateEl.textContent = `+${format(state.passive * passiveBoost)} / sec`;
+      powerEl.textContent = format(state.clickPower);
+      comboEl.textContent = `Combo x${Math.max(1, Math.floor(state.combo))} | Best x${Math.floor(state.bestCombo)}`;
+      repairTextEl.textContent = `${Math.floor(state.repair)}%`;
+      clearedEl.textContent = format(state.cleared);
+      game.style.setProperty("--repair", `${Math.min(100, (state.repair / MAX_REPAIR) * 100)}%`);
+
+      if (state.repair >= 7500) {
+        threatEl.textContent = "Network nearly clean";
+        missionTextEl.textContent = "Buy the last internet fixes to finish the repair.";
+      } else if (state.repair >= 4000) {
+        threatEl.textContent = "Signal recovering";
+        missionTextEl.textContent = "The backbone is stable. Keep buying Fix Internet.";
+      } else {
+        threatEl.textContent = "Signal unstable";
+        missionTextEl.textContent = "Buy Fix Internet with Code Coins to stabilize the first nodes.";
+      }
+
+      boostBtn.disabled = state.coins < 50 || performance.now() < state.boostUntil || state.won;
+      bearBtn.disabled = state.paused || state.won;
+      stopBtn.textContent = state.paused ? "Start" : "Stop";
+      renderUpgrades();
+    }
+
+    function gameLoop(now) {
+      const dt = Math.min(0.05, (now - lastTick) / 1000);
+      lastTick = now;
+
+      if (!state.won && !state.paused) {
+        const passiveBoost = now < state.boostUntil ? 2 : 1;
+        state.coins += state.passive * passiveBoost * dt;
+        botTimer += dt * 1000;
+        nodeTimer += dt * 1000;
+
+        if (state.botSpeed > 0 && botTimer >= Math.max(850, 4200 - state.botSpeed * 460)) {
+          botTimer = 0;
+          const rect = bearBtn.getBoundingClientRect();
+          clickBear(rect.left + rect.width / 2, rect.top + rect.height / 2, true);
+        }
+
+        if (nodeTimer >= 900) {
+          nodeTimer = 0;
+          spawnNode();
+        }
+      }
+
+      updateUI();
+      requestAnimationFrame(gameLoop);
+    }
+
+    boostBtn.addEventListener("click", () => {
+      if (state.coins < 50 || performance.now() < state.boostUntil || state.won) return;
+      state.coins -= 50;
+      state.boostUntil = performance.now() + 10000;
+      statusEl.textContent = "Boost active: double Code Coins for 10 seconds.";
+      updateUI();
+      saveGame();
+    });
+
+    stopBtn.addEventListener("click", () => {
+      if (state.won) return;
+      state.paused = !state.paused;
+      statusEl.textContent = state.paused
+        ? "Stopped. The bear is paused, but the shop is still open."
+        : "Started. Click the big bear icon to earn Code Coins.";
+      updateUI();
+      saveGame();
+    });
+
+    resetBtn.addEventListener("click", () => {
+      localStorage.removeItem(SAVE_KEY);
+      for (const glitch of glitches) glitch.el.remove();
+      glitches = [];
+      winModal.classList.remove("show");
+      state = freshState();
+      shopSignature = "";
+      statusEl.textContent = "Fresh network loaded. Click the big bear icon to earn Code Coins.";
+      updateUI();
+      saveGame();
+    });
+
+    playAgainBtn.addEventListener("click", () => {
+      resetBtn.click();
+    });
+
+    bearBtn.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      if (event.button !== 0) return;
+      clickBear(event.clientX, event.clientY);
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.code !== "Space" || event.repeat) return;
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      if (activeTag === "input" || activeTag === "textarea" || activeTag === "select") return;
+
+      event.preventDefault();
+      const rect = bearBtn.getBoundingClientRect();
+      clickBear(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    });
+
+    window.addEventListener("resize", () => {
+      for (const glitch of glitches) glitch.el.remove();
+      glitches = [];
+      for (let i = 0; i < 5; i += 1) spawnNode();
+    });
+
+    loadGame();
+    for (let i = 0; i < 9; i += 1) spawnNode();
+    updateUI();
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>

@@ -3,6 +3,14 @@ import "./games.css";
 
 const GAMES = [
   {
+    slug: "glitch-clicker",
+    title: "Glitch Clicker",
+    status: "New clicker",
+    description:
+      "Click the big bear icon to earn Code Coins, buy upgrades, purchase Fix Internet, and repair the network one patch at a time.",
+    highlights: ["Big bear clicks", "Code Coin shop", "Fix Internet"],
+  },
+  {
     slug: "super-bear-last-hero",
     title: "Super Bear: Last Hero",
     status: "New survival",
@@ -84,20 +92,23 @@ export default function GamesPage() {
         <section className="games-feature" aria-label="Featured game">
           <div className="games-feature-card">
             <p className="games-panel-label">Featured Drop</p>
-            <h2>Super Bear: Last Hero</h2>
+            <h2>Glitch Clicker</h2>
             <p className="games-copy">
-              Everyone in the world became evil except Super Bear. Survive
-              corrupted hero waves, rescue civilians, and resist the corruption
-              meter before Dark Super Bear takes over.
+              Click the big bear icon to earn Code Coins, install upgrades,
+              buy Fix Internet, and repair the network before the signal gets
+              swallowed by corrupted packets.
             </p>
             <div className="games-chip-row">
-              <span className="games-chip">Wave survival</span>
-              <span className="games-chip">Civilian rescues</span>
-              <span className="games-chip">Corruption meter</span>
+              <span className="games-chip">Clicker progression</span>
+              <span className="games-chip">Code Coin shop</span>
+              <span className="games-chip">Fix Internet</span>
             </div>
             <div className="games-actions">
+              <Link className="games-link games-link-primary" href="/games/glitch-clicker">
+                Play Glitch Clicker
+              </Link>
               <Link
-                className="games-link games-link-primary"
+                className="games-link"
                 href="/games/super-bear-last-hero"
               >
                 Play Last Hero
@@ -122,7 +133,7 @@ export default function GamesPage() {
               </Link>
               <a
                 className="games-link"
-                href="/games/super-bear-last-hero/index.html"
+                href="/games/glitch-clicker/index.html"
                 target="_blank"
                 rel="noreferrer"
               >
