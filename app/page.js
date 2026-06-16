@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-const LAUNCH_DATE = "2026-06-16T12:00:00-04:00";
+const LAUNCH_DATE = "2026-07-16T12:00:00-04:00";
 
 function getTimeLeft(targetDate) {
   const diff = Math.max(0, new Date(targetDate).getTime() - Date.now());
